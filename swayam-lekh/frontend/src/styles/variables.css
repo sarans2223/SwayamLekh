@@ -1,0 +1,33 @@
+:root {
+  /* JEE Colors */
+  --bg: #F0F0F0;
+  --surface: #FFFFFF;
+  --surface2: #F7F7F7;
+  --ink: #000000;
+  --ink2: #333333;
+  --ink3: #666666;
+  --accent: #1a5276;
+  --accent-dark: #1a3a5c;
+  --accent-light: #D6EAF8;
+  --accent-mid: #AED6F1;
+  --accent-hover: #154360;
+  --green: #1e8449;
+  --green-light: #D5F5E3;
+  --red: #C0392B;
+  --red-light: #FADBD8;
+  --amber: #B7950B;
+  --amber-light: #FEF9E7;
+  --border: #CCCCCC;
+  --border-dark: #999999;
+  
+  /* JEE Shadows & Radius */
+  --shadow: 0 1px 2px rgba(0,0,0,0.12);
+  --shadow-lg: 0 2px 8px rgba(0,0,0,0.15);
+  --radius: 4px;
+  --radius-sm: 2px;
+  --radius-lg: 6px;
+
+  /* Typography - STRICT ARIAL */
+  --font-heading: 'Arial', sans-serif;
+  --font-body: 'Arial', sans-serif;
+}
