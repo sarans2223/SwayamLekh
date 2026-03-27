@@ -116,11 +116,6 @@ export default function LoginPage() {
                   ☁️ Uploading photo to database…
                 </p>
               )}
-              {student.photo && !uploading && (
-                <p style={{ marginTop: '12px', fontSize: '13px', color: '#2d6a4f', fontWeight: 'bold' }}>
-                  ✅ Photo captured and saved!
-                </p>
-              )}
             </div>
           )}
 

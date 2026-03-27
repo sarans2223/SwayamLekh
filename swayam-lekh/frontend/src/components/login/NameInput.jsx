@@ -26,9 +26,6 @@ export default function NameInput({ label, value, onChange, placeholder, onDone 
         />
         <div style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', display: 'flex', alignItems: 'center', gap: '6px' }}>
           {isValid && <CheckCircle2 size={20} color="var(--green)" />}
-          <button type="button" style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0 }}>
-            <Mic size={20} color="var(--ink3)" />
-          </button>
         </div>
       </div>
 

@@ -187,12 +187,12 @@ export default function ExamPage() {
 function VoiceStatusBadge() {
   const [active, setActive] = useState(true);
 
-  // Pulse every 30s to show it's alive
+  // Pulse every 2s to show it's alive (live monitoring)
   useEffect(() => {
     const id = setInterval(() => {
       setActive(false);
       setTimeout(() => setActive(true), 800);
-    }, 30_000);
+    }, 2000);
     return () => clearInterval(id);
   }, []);
 
@@ -213,7 +213,7 @@ function VoiceStatusBadge() {
           Voice Monitor {active ? 'Active' : '…'}
         </div>
         <div style={{ fontSize: 10, color: '#bbb', marginTop: 2 }}>
-          Checks every 30 seconds
+          Live voice monitoring
         </div>
       </div>
     </div>

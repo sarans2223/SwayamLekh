@@ -7,6 +7,7 @@ import LoginPage from './pages/LoginPage';
 import InstructionsPage from './pages/InstructionsPage';
 import ExamPage from './pages/ExamPage';
 import FinishPage from './pages/FinishPage';
+import VoiceSetupPage from './pages/VoiceSetupPage';
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
           <Routes>
             <Route path="/" element={<LoginPage />} />
             <Route path="/instructions" element={<InstructionsPage />} />
+            <Route path="/voice-setup" element={<VoiceSetupPage />} />
             <Route path="/exam" element={<ExamPage />} />
             <Route path="/finish" element={<FinishPage />} />
           </Routes>

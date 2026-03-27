@@ -39,34 +39,26 @@ export const uploadPhoto = async (regNo, name, dataUrl) => {
  * Upload one voice sample blob + extracted features to Supabase.
  * Table: voice_profiles   Storage bucket: voice-profiles
  */
+
 export const saveVoiceProfile = async (regNo, name, commandIndex, commandText, audioBlob, features) => {
-  if (isMock) {
-    console.warn('[MOCK] saveVoiceProfile skipped — no Supabase config');
-    return true;
-  }
   try {
-    const fileName = `${regNo}/cmd_${commandIndex}_${Date.now()}.webm`;
-
-    const { data: up, error: upErr } = await supabase.storage
-      .from('voice-profiles')
-      .upload(fileName, audioBlob, { contentType: 'audio/webm', upsert: false });
-    if (upErr) throw upErr;
-
-    const { error: dbErr } = await supabase.from('voice_profiles').insert([{
-      register_no:       regNo,
-      student_name:      name,
-      command_index:     commandIndex,
-      command_text:      commandText,
-      storage_path:      up.path,
-      mfcc_features:     features?.mfcc      ?? null,
-      pitch_mean:        features?.pitch_mean ?? null,
-      pitch_std:         features?.pitch_std  ?? null,
-      energy_mean:       features?.energy_mean ?? null,
-      zero_crossing_rate: features?.zcr       ?? null,
-      spectral_centroid: features?.spectral_centroid ?? null,
-    }]);
-    if (dbErr) throw dbErr;
-
+    const formData = new FormData();
+    formData.append('regNo', regNo);
+    formData.append('name', name);
+    formData.append('commandIndex', commandIndex);
+    formData.append('commandText', commandText);
+    formData.append('audio', audioBlob, 'audio.webm');
+    if (features) {
+      formData.append('features', JSON.stringify(features));
+    }
+    const response = await fetch(import.meta.env.VITE_BACKEND_URL + '/api/upload-audio', {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error || 'Upload failed');
+    }
     return true;
   } catch (err) {
     console.error('saveVoiceProfile error:', err);
