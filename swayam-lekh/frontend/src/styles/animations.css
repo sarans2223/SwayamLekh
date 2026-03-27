@@ -52,3 +52,9 @@
   50% { background-color: rgba(220, 38, 38, 0.8); }
   100% { background-color: rgba(220, 38, 38, 0.4); }
 }
+
+@keyframes malpracticePulse {
+  0%   { background-color: rgba(180, 0, 0, 0.90); }
+  50%  { background-color: rgba(220, 0, 0, 0.97); }
+  100% { background-color: rgba(180, 0, 0, 0.90); }
+}

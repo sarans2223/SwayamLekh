@@ -7,12 +7,11 @@ export function StudentProvider({ children }) {
     const saved = sessionStorage.getItem('swayam_student');
     return saved ? JSON.parse(saved) : {
       name: '',
-      registerNo: '',
-      hallTicket: '',
+      registerNo: '',       // 8-digit registration number (canonical field)
       disabilityMode: 'bone',
       subjectMode: 'normal',
       photo: null,
-      voiceSample: null
+      voiceSample: null,    // base64 audio blob from VoiceSampleModal
     };
   });
 

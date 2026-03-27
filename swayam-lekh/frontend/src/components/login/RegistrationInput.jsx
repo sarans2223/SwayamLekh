@@ -1,80 +1,88 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 
-export default function RegistrationInput({ value = [], onChange, onComplete }) {
-  const [readingBack, setReadingBack] = useState(false);
+export default function RegistrationInput({ value = '', onChange, onComplete }) {
   const inputsRef = useRef([]);
+  // Use local state for the exact 8 boxes to prevent jumping when characters are deleted
+  const [digits, setDigits] = useState(
+    Array.from({ length: 8 }, (_, i) => value[i] || '')
+  );
 
   const handleChange = (e, idx) => {
-    const val = e.target.value;
-    if (/[^0-9]/.test(val)) return;
+    const char = e.target.value.replace(/[^0-9]/g, '').slice(-1);
+    // Allow empty string if deleting, otherwise skip invalid
+    if (!char && e.target.value !== '') return;
 
-    const newArr = [...value];
-    newArr[idx] = val;
-    onChange(newArr);
+    const newDigits = [...digits];
+    newDigits[idx] = char;
+    setDigits(newDigits);
 
-    if (val && idx < 7) {
-      inputsRef.current[idx + 1].focus();
+    const newVal = newDigits.join('');
+    if (onChange) onChange(newVal);
+
+    if (char && idx < 7) {
+      inputsRef.current[idx + 1]?.focus();
+    }
+
+    // Trigger complete
+    if (newDigits.every(d => d !== '') && onComplete && newVal.length === 8) {
+      onComplete(newVal);
     }
   };
 
   const handleKeyDown = (e, idx) => {
-    if (e.key === 'Backspace' && !value[idx] && idx > 0) {
-      inputsRef.current[idx - 1].focus();
+    if (e.key === 'Backspace') {
+      const newDigits = [...digits];
+      
+      if (newDigits[idx]) {
+        newDigits[idx] = '';
+        setDigits(newDigits);
+        if (onChange) onChange(newDigits.join(''));
+      } else if (idx > 0) {
+        newDigits[idx - 1] = '';
+        setDigits(newDigits);
+        if (onChange) onChange(newDigits.join(''));
+        inputsRef.current[idx - 1]?.focus();
+      }
     }
   };
 
-  const isComplete = value.length === 8 && value.every(v => v);
-
-  useEffect(() => {
-    if (isComplete) {
-      setReadingBack(true);
-      const t = setTimeout(() => {
-        setReadingBack(false);
-        if (onComplete) onComplete();
-      }, 1500);
-      return () => clearTimeout(t);
-    }
-  }, [isComplete]);
-
-  const containerStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '4px', /* JEE STRICT */
-    flexWrap: 'wrap'
+  const getInputStyle = (idx) => {
+    const char = digits[idx] || '';
+    return {
+      width: '38px',
+      height: '44px',
+      fontSize: '20px',
+      textAlign: 'center',
+      fontWeight: 'bold',
+      border: `2px solid ${char ? 'var(--green)' : 'var(--border)'}`,
+      borderRadius: 'var(--radius-sm)',
+      backgroundColor: char ? 'var(--green-light)' : 'var(--surface)',
+      color: 'var(--ink)',
+      outline: 'none',
+    };
   };
-
-  const getInputStyle = (idx) => ({
-    width: '36px', /* JEE STRICT */
-    height: '42px', /* JEE STRICT */
-    fontSize: '18px',
-    textAlign: 'center',
-    fontWeight: 'bold',
-    border: `1px solid ${value[idx] ? 'var(--green)' : 'var(--border)'}`,
-    borderRadius: 'var(--radius-sm)', /* Sharp corners */
-    backgroundColor: value[idx] ? '#f0fff0' : 'var(--surface)',
-    color: 'var(--ink)',
-    outline: 'none',
-    transition: 'all 0.1s'
-  });
 
   return (
     <div style={{ marginBottom: '24px' }}>
-      <div style={{ marginBottom: '8px', fontWeight: 'bold', fontSize: '13px', textTransform: 'uppercase', color: 'var(--ink2)' }}>
+      <div style={{ marginBottom: '10px', fontWeight: 'bold', fontSize: '13px', textTransform: 'uppercase', color: 'var(--ink2)', display: 'flex', alignItems: 'center', gap: '12px' }}>
         8-Digit Hall Ticket / Registration No.
-        {readingBack && <span style={{ marginLeft: '12px', color: 'var(--accent)', fontWeight: 'normal' }}>Verifying...</span>}
       </div>
-      <div style={containerStyle}>
+      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
         {Array.from({ length: 8 }).map((_, i) => (
           <input
             key={i}
             ref={el => inputsRef.current[i] = el}
-            value={value[i] || ''}
+            value={digits[i] || ''}
             onChange={e => handleChange(e, i)}
             onKeyDown={e => handleKeyDown(e, i)}
             maxLength={1}
+            inputMode="numeric"
             style={getInputStyle(i)}
-            onFocus={(e) => e.target.style.borderColor = 'var(--accent)'}
-            onBlur={(e) => e.target.style.borderColor = value[i] ? 'var(--green)' : 'var(--border)'}
+            onFocus={e => { e.target.style.borderColor = 'var(--accent)'; e.target.style.boxShadow = '0 0 0 2px var(--accent-light)'; }}
+            onBlur={e => {
+              e.target.style.borderColor = (digits[i] || '') ? 'var(--green)' : 'var(--border)';
+              e.target.style.boxShadow = 'none';
+            }}
           />
         ))}
       </div>
