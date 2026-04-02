@@ -1,6 +1,56 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
-export default function QuestionSidebar({ questions = [], answers = {}, flags = [], currentIndex, onJump }) {
+export default function QuestionSidebar({
+  questions = [],
+  sections = [],
+  answers = {},
+  flags = [],
+  currentIndex,
+  onJump,
+  activeSectionId: controlledSectionId,
+  onSectionChange,
+}) {
+  const [internalSectionId, setInternalSectionId] = useState(() => (sections[0]?.id ?? 'all'));
+
+  useEffect(() => {
+    if (controlledSectionId) return;
+    if (!sections.length) {
+      setInternalSectionId('all');
+      return;
+    }
+    setInternalSectionId((prev) => (sections.some((section) => section.id === prev) ? prev : sections[0].id));
+  }, [sections, controlledSectionId]);
+
+  const activeSectionId = controlledSectionId ?? internalSectionId;
+
+  const handleSectionSelect = (id) => {
+    if (onSectionChange) {
+      onSectionChange(id);
+    } else {
+      setInternalSectionId(id);
+    }
+  };
+
+  const questionIndexMap = useMemo(() => {
+    const map = new Map();
+    questions.forEach((question, idx) => {
+      map.set(question.id, idx);
+    });
+    return map;
+  }, [questions]);
+
+  const visibleQuestions = useMemo(() => {
+    if (!sections.length || activeSectionId === 'all') return questions;
+    const activeSection = sections.find((section) => section.id === activeSectionId);
+    return activeSection ? activeSection.questions : questions;
+  }, [sections, activeSectionId, questions]);
+
+  const activeSectionLabel = useMemo(() => {
+    if (!sections.length || activeSectionId === 'all') return 'All Questions';
+    const activeSection = sections.find((section) => section.id === activeSectionId);
+    if (!activeSection) return 'All Questions';
+    return `${activeSection.label} • ${activeSection.marks} mark${activeSection.marks > 1 ? 's' : ''}`;
+  }, [sections, activeSectionId]);
   const getStatus = (qId) => {
     const isAnswered = !!answers[qId];
     const isFlagged = flags.includes(qId);
@@ -34,22 +84,52 @@ export default function QuestionSidebar({ questions = [], answers = {}, flags = 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <h3 style={{ fontSize: '14px', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '16px', borderBottom: '1px solid #EEE', paddingBottom: '8px' }}>
-        Question Palette
+        {activeSectionLabel}
       </h3>
+
+      {sections.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
+          {sections.map((section) => {
+            const isActive = activeSectionId === section.id;
+            return (
+              <button
+                key={section.id}
+                type="button"
+                onClick={() => handleSectionSelect(section.id)}
+                style={{
+                  border: `1px solid ${isActive ? 'var(--accent)' : 'var(--border)'}`,
+                  backgroundColor: isActive ? 'rgba(0, 102, 255, 0.08)' : 'white',
+                  borderRadius: '8px',
+                  padding: '10px 12px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  gap: 4,
+                }}
+              >
+                <span style={{ fontSize: 12, fontWeight: 600 }}>{section.label}</span>
+                <span style={{ fontSize: 11, color: 'var(--ink3)' }}>{section.questions.length} questions • {section.marks} mark{section.marks > 1 ? 's' : ''}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
       
       <div style={paletteStyle}>
-        {questions.map((q, i) => {
+        {visibleQuestions.map((q) => {
           const status = getStatus(q.id);
-          const active = currentIndex === i;
+          const originalIndex = questionIndexMap.get(q.id) ?? 0;
+          const active = currentIndex === originalIndex;
           const sStyle = getStatusStyle(status);
           
           return (
             <div 
               key={q.id} 
               style={{ ...boxStyle, ...sStyle, outline: active ? '2px solid black' : 'none', outlineOffset: '2px' }}
-              onClick={() => onJump(i)}
+              onClick={() => onJump(originalIndex)}
             >
-              {i + 1}
+              {originalIndex + 1}
             </div>
           );
         })}

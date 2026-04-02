@@ -1,22 +1,24 @@
-// Empty shell for Voice API listener
-export function useVoiceInput() {
-  /**
-   * @type {boolean}
-   */
-  const listening = false;
+import { applyPhoneticMap } from '../utils/phoneticMap';
+import { correctTranscript } from '../utils/correctTranscript';
 
-  /**
-   * @type {string}
-   */
-  const transcript = "";
+// Lightweight placeholder; real voice capture handled elsewhere. Expose the
+// correction pipeline for any hook/component that wants to reuse it.
+export function useVoiceInput() {
+  const listening = false;
+  const transcript = '';
 
   const start = () => {
-    console.log("Mock start VoiceInput");
+    console.log('Mock start VoiceInput');
   };
 
   const stop = () => {
-    console.log("Mock stop VoiceInput");
+    console.log('Mock stop VoiceInput');
   };
 
-  return { listening, start, stop, transcript };
+  const runCorrection = async (rawText, questionText, subject) => {
+    const mapped = applyPhoneticMap(rawText);
+    return correctTranscript(mapped, questionText, subject);
+  };
+
+  return { listening, start, stop, transcript, runCorrection };
 }

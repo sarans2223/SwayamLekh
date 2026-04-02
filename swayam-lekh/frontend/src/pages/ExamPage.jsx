@@ -1,9 +1,13 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useExam } from '../context/ExamContext';
 import { useStudent } from '../context/StudentContext';
 import { useVoice } from '../context/VoiceContext';
 import { useExamTimer } from '../hooks/useExamTimer';
+import { useWhisper } from '../hooks/useWhisper';
+import { sarvamTranscribe } from '../utils/sarvamSTT';
+import { applyPhoneticMap } from '../utils/phoneticMap';
+import { correctTranscript } from '../utils/correctTranscript';
 
 import ExamHeader       from '../components/exam/ExamHeader';
 import QuestionPanel    from '../components/exam/QuestionPanel';
@@ -14,8 +18,28 @@ import CountdownOverlay from '../components/exam/CountdownOverlay';
 import AlarmOverlay     from '../components/exam/AlarmOverlay';
 import SecurityCodeModal from '../components/exam/SecurityCodeModal';
 import MalpracticeModal from '../components/exam/MalpracticeModal';
+import ExamLoadingScreen from '../components/exam/ExamLoadingScreen';
 
-import { startVoiceMonitoring, stopVoiceMonitoring } from '../utils/voiceMonitor';
+import { startVoiceMonitoring, stopVoiceMonitoring, setMonitorStream } from '../utils/voiceMonitor';
+import { playSarvamTTS } from '../utils/sarvamTTS';
+import { useQuestionAudioCache } from '../hooks/useQuestionAudioCache';
+import { matchCommand } from '../utils/commandMatcher';
+
+const MARK_SECTION_ORDER = [1, 2, 3, 5];
+const OPTION_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
+
+const buildQuestionVoiceText = (question, idx) => {
+  const base = (question?.text || '').trim();
+  const qNumber = Number.isInteger(idx) && idx >= 0 ? `Question ${idx + 1}. ` : '';
+  if (!Array.isArray(question?.options) || !question.options.length) return `${qNumber}${base}`.trim();
+
+  const optionsReadout = question.options
+    .slice(0, OPTION_LABELS.length)
+    .map((opt, i) => `Option ${OPTION_LABELS[i]}: ${opt}`)
+    .join('. ');
+
+  return optionsReadout ? `${qNumber}${base}. ${optionsReadout}` : `${qNumber}${base}`;
+};
 
 export default function ExamPage() {
   const navigate = useNavigate();
@@ -29,11 +53,305 @@ export default function ExamPage() {
     submitExam,
     confirmSubmit,
     dismissAlarm,
+    triggerAlarm,
   } = useExam();
 
   const { student }                         = useStudent();
-  const { mode, lastCommand }               = useVoice();
+  const { mode, lastCommand, setLastCommand } = useVoice();
   const { timeLeft, formatted, isWarning, isCritical } = useExamTimer(state.startTime);
+  const instructionLang = student?.instructionLang === 'ta' ? 'ta' : 'en';
+  const examIntroSrc = instructionLang === 'ta' ? '/audio/exam_intro_ta.mp3' : '/audio/exam_intro_en.mp3';
+  const introAudioRef = useRef(null);
+  const [introBlocked, setIntroBlocked] = useState(false);
+  const [introCompleted, setIntroCompleted] = useState(false);
+  const examMicRef = useRef(null);
+  const hasLockedMicRef = useRef(false);
+  const sarvamAudioRef = useRef(null);
+  const optionRecognitionRef = useRef(null);
+  const sttBusyRef = useRef(false);
+  const introDelayRef = useRef(null);
+  const commandHandlerRef = useRef(() => {});
+  const pendingQuestionNumberRef = useRef(false);
+  const [micStatus, setMicStatus] = useState('idle'); // idle | requesting | active | error
+  const [micError, setMicError] = useState(null);
+  const [micReady, setMicReady] = useState(false); // true once exam mic stream is open
+  const [activeSectionId, setActiveSectionId] = useState('all');
+  const [spellMode, setSpellMode] = useState(false);
+  const [examStarted, setExamStarted] = useState(false);
+
+  const {
+    preloadAllQuestions,
+    playQuestion,
+    stopAudio,
+    loadingProgress,
+    totalQuestions,
+    cacheReady,
+  } = useQuestionAudioCache();
+
+  const {
+    listening: commandListening,
+    start: startWebSpeech,
+    stop: stopWebSpeech,
+    supported: webSpeechSupported,
+  } = useWhisper({
+    onCommand: (text) => {
+      const cleaned = (text || '').trim();
+      if (!cleaned) return;
+      commandHandlerRef.current(cleaned);
+    },
+    onTranscript: () => {},
+    continuous: true,
+  });
+
+  const startPersistentMic = useCallback(async () => {
+    if (hasLockedMicRef.current || examMicRef.current) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setMicStatus('error');
+      setMicError('Microphone is not supported in this browser.');
+      return;
+    }
+    setMicStatus('requesting');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      examMicRef.current = stream;
+      hasLockedMicRef.current = true;
+      setMicStatus('active');
+      setMicError(null);
+      // Share this stream with the voice monitor BEFORE it starts, so no competing stream is opened
+      setMonitorStream(stream);
+      setMicReady(true); // triggers voice monitoring useEffect
+      console.log('[ExamMic] Microphone locked for exam duration.');
+    } catch (err) {
+      console.error('[ExamMic] Failed to access microphone:', err);
+      setMicStatus('error');
+      setMicError(err?.message || 'Microphone permission denied.');
+    }
+  }, [setMicError, setMicStatus]);
+
+  const playIntroAudio = useCallback(() => {
+    if (!examIntroSrc) return;
+    if (!introAudioRef.current) {
+      introAudioRef.current = new Audio(examIntroSrc);
+    }
+    const audio = introAudioRef.current;
+    audio.currentTime = 0;
+    audio.play()
+      .then(() => {
+        setIntroBlocked(false);
+      })
+      .catch(() => {
+        setIntroBlocked(true);
+        startPersistentMic();
+        markIntroComplete();
+      });
+  }, [examIntroSrc]);
+
+  const markIntroComplete = useCallback(() => {
+    if (introDelayRef.current) {
+      clearTimeout(introDelayRef.current);
+    }
+    introDelayRef.current = setTimeout(() => {
+      setIntroCompleted(true);
+      introDelayRef.current = null;
+    }, 2000);
+  }, []);
+
+  const langCode = instructionLang === 'ta' ? 'ta-IN' : 'en-IN';
+
+  const audioQuestions = useMemo(() => (
+    (state.questions || []).map((q, idx) => ({ id: q.id, text: buildQuestionVoiceText(q, idx) }))
+  ), [state.questions]);
+
+  useEffect(() => {
+    if (!audioQuestions.length) return undefined;
+    preloadAllQuestions(audioQuestions);
+    return () => stopAudio();
+  }, [audioQuestions, preloadAllQuestions, stopAudio]);
+
+  useEffect(() => {
+    if (examStarted || !cacheReady || !state.questions?.length) return;
+    setExamStarted(true);
+    lastReadQuestionRef.current = state.questions[0].id;
+    playQuestion(state.questions[0].id, buildQuestionVoiceText(state.questions[0], 0));
+  }, [cacheReady, examStarted, playQuestion, state.questions]);
+
+  // Start Web Speech solely for command/option detection; dictation stays on Groq/Sarvam.
+  useEffect(() => {
+    if (!webSpeechSupported) return undefined;
+    if (!introCompleted || !micReady) return undefined;
+    startWebSpeech();
+    return () => {
+      stopWebSpeech();
+    };
+  }, [introCompleted, micReady, startWebSpeech, stopWebSpeech, webSpeechSupported]);
+
+  const noteCommand = useCallback((reason) => {
+    if (reason) setLastCommand?.(reason);
+  }, [setLastCommand]);
+
+  const speakText = useCallback(async (text) => {
+    if (!text || !text.trim()) return null;
+    sarvamAudioRef.current?.pause();
+    sarvamAudioRef.current = null;
+    const audio = await playSarvamTTS(text, langCode);
+    sarvamAudioRef.current = audio;
+    return audio;
+  }, [langCode]);
+
+  const speakQuestionAloud = useCallback(async (question, idx) => {
+    if (!question) return null;
+    const numberIdx = Number.isInteger(idx) ? idx : undefined;
+    return playQuestion(question.id, buildQuestionVoiceText(question, numberIdx));
+  }, [playQuestion]);
+
+  const speakAnswerAloud = useCallback(async (question, answer) => {
+    if (!question) return null;
+    let narration = '';
+    if (Array.isArray(question.options) && question.options.length) {
+      if (!answer) {
+        narration = instructionLang === 'ta' ? 'இதுவரை விருப்பம் தெரிவிக்கப்படவில்லை.' : 'No option selected yet.';
+      } else {
+        const idx = OPTION_LABELS.indexOf(answer);
+        const optionText = idx >= 0 ? question.options[idx] : '';
+        narration = optionText
+          ? `${instructionLang === 'ta' ? 'தேர்ந்தெடுக்கப்பட்ட விருப்பம்' : 'Selected option'} ${answer}. ${optionText}`
+          : `${instructionLang === 'ta' ? 'தேர்ந்தெடுக்கப்பட்ட விருப்பம்' : 'Selected option'} ${answer}.`;
+      }
+    } else {
+      narration = answer?.trim()
+        ? `${instructionLang === 'ta' ? 'உங்கள் பதில்' : 'Your answer'}: ${answer}`
+        : instructionLang === 'ta'
+          ? 'இதுவரை பதில் எழுதப்படவில்லை.'
+          : 'No answer typed yet.';
+    }
+    return speakText(narration);
+  }, [instructionLang, speakText]);
+
+  useEffect(() => {
+    const audio = new Audio(examIntroSrc);
+    audio.preload = 'auto';
+    introAudioRef.current = audio;
+    setIntroCompleted(false);
+
+    const handleEnded = () => {
+      startPersistentMic();
+      markIntroComplete();
+    };
+
+    const handleError = () => {
+      setIntroBlocked(true);
+      startPersistentMic();
+      markIntroComplete();
+    };
+
+    audio.addEventListener('ended', handleEnded);
+    audio.addEventListener('error', handleError);
+
+    playIntroAudio();
+    return () => {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.removeEventListener('ended', handleEnded);
+      audio.removeEventListener('error', handleError);
+      introAudioRef.current = null;
+      if (introDelayRef.current) {
+        clearTimeout(introDelayRef.current);
+        introDelayRef.current = null;
+      }
+      if (examMicRef.current) {
+        examMicRef.current.getTracks().forEach((track) => track.stop());
+        examMicRef.current = null;
+      }
+      hasLockedMicRef.current = false;
+      setIntroCompleted(false);
+      sarvamAudioRef.current?.pause();
+      sarvamAudioRef.current = null;
+      setMicStatus('idle');
+    };
+  }, [examIntroSrc, markIntroComplete, playIntroAudio, startPersistentMic]);
+
+  useEffect(() => {
+    if (!introBlocked) return undefined;
+    const handler = () => {
+      startPersistentMic();
+      markIntroComplete();
+      playIntroAudio();
+      window.removeEventListener('pointerdown', handler);
+    };
+    window.addEventListener('pointerdown', handler);
+    return () => window.removeEventListener('pointerdown', handler);
+  }, [introBlocked, playIntroAudio]);
+
+  useEffect(() => {
+    return () => {
+      sarvamAudioRef.current?.pause();
+      sarvamAudioRef.current = null;
+      if (optionRecognitionRef.current) {
+        try { optionRecognitionRef.current.stop(); } catch (_) {}
+        optionRecognitionRef.current = null;
+      }
+    };
+  }, []);
+
+  const markSections = useMemo(() => {
+    const grouped = {};
+    state.questions.forEach((question) => {
+      if (!grouped[question.marks]) grouped[question.marks] = [];
+      grouped[question.marks].push(question);
+    });
+
+    return MARK_SECTION_ORDER
+      .map((marks, idx) => ({
+        id: `section-${idx + 1}`,
+        label: `Section ${idx + 1}`,
+        marks,
+        questions: grouped[marks] || [],
+      }))
+      .filter((section) => section.questions.length);
+  }, [state.questions]);
+
+  const questionSectionMap = useMemo(() => {
+    const map = new Map();
+    markSections.forEach((section) => {
+      section.questions.forEach((q) => map.set(q.id, section.id));
+    });
+    return map;
+  }, [markSections]);
+
+  useEffect(() => {
+    if (!markSections.length) {
+      setActiveSectionId('all');
+      return;
+    }
+    setActiveSectionId((prev) => (markSections.some((section) => section.id === prev) ? prev : markSections[0].id));
+  }, [markSections]);
+
+  useEffect(() => {
+    if (!markSections.length) return;
+    const currentQuestionId = state.questions[state.currentIndex]?.id;
+    if (!currentQuestionId) return;
+    const inferredSectionId = questionSectionMap.get(currentQuestionId);
+    if (inferredSectionId && inferredSectionId !== activeSectionId) {
+      setActiveSectionId(inferredSectionId);
+    }
+  }, [activeSectionId, markSections.length, questionSectionMap, state.currentIndex, state.questions]);
+
+  const moveToNextSection = useCallback(() => {
+    if (!markSections.length) return false;
+    const currentIdx = markSections.findIndex((section) => section.id === activeSectionId);
+    const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % markSections.length : 0;
+    const nextSection = markSections[nextIdx];
+    setActiveSectionId(nextSection.id);
+
+    const firstQuestionId = nextSection.questions[0]?.id;
+    if (firstQuestionId) {
+      const targetIdx = state.questions.findIndex((q) => q.id === firstQuestionId);
+      if (targetIdx >= 0) {
+        jumpToQuestion(targetIdx);
+      }
+    }
+    return true;
+  }, [activeSectionId, jumpToQuestion, markSections, state.questions]);
 
   // ── Voice mismatch state ────────────────────────────────────────────────
   const [malpractice, setMalpractice] = useState(null); // null | { score, at }
@@ -43,13 +361,12 @@ export default function ExamPage() {
     setMalpractice({ score: similarityScore, at: new Date().toISOString() });
   }, []);
 
-  // ── Start voice monitoring on mount, stop on unmount ───────────────────
+  // ── Start voice monitoring ONLY after mic is open (so monitor reuses shared stream)
   useEffect(() => {
-    if (student?.registerNo) {
-      startVoiceMonitoring(student.registerNo, student.name, handleMismatch);
-    }
+    if (!student?.registerNo || !micReady) return;
+    startVoiceMonitoring(student.registerNo, student.name, handleMismatch);
     return () => stopVoiceMonitoring();
-  }, [student?.registerNo]);
+  }, [student?.registerNo, micReady]);
 
   // ── Navigate to finish when exam submitted ──────────────────────────────
   useEffect(() => {
@@ -59,6 +376,807 @@ export default function ExamPage() {
   const currentQuestion = state.questions[state.currentIndex];
   const currentAnswer   = state.answers[currentQuestion?.id] || '';
   const isFlagged       = currentQuestion ? state.flags.includes(currentQuestion.id) : false;
+  const currentAnswerRef = useRef(currentAnswer);
+  const lastReadQuestionRef = useRef(null);
+
+  useEffect(() => {
+    currentAnswerRef.current = currentAnswer;
+  }, [currentAnswer]);
+
+  useEffect(() => {
+    if (!currentQuestion || !introCompleted || !examStarted) return;
+
+    const sameQuestionRerun = lastReadQuestionRef.current === currentQuestion.id;
+    lastReadQuestionRef.current = currentQuestion.id;
+
+    let cancelled = false;
+    let optionCaptured = false;
+
+    const stopRecognition = () => {
+      if (optionRecognitionRef.current) {
+        try {
+          const r = optionRecognitionRef.current;
+          // Clear all handlers first so no callbacks fire after stop
+          r.ondataavailable = null;
+          r.onstop          = null;
+          r.onerror         = null;
+          if (r.state && r.state !== 'inactive') r.stop(); // MediaRecorder
+        } catch (_) {}
+        optionRecognitionRef.current = null;
+      }
+    };
+
+    const detectSpokenOption = (text = '') => {
+      const normalized = text.toLowerCase().replace(/\s+/g, ' ').trim();
+      if (!normalized) return null;
+      const tokens = normalized.split(' ');
+      const padded = ` ${normalized} `;
+      const aliasMap = {
+        A: ['option a', 'choice a', 'letter a', 'select a', 'answer a', 'a', 'ay', 'eh', 'hey', 'one', 'first'],
+        B: ['option b', 'choice b', 'letter b', 'select b', 'answer b', 'b', 'bee', 'be', 'two', 'second'],
+        C: ['option c', 'choice c', 'letter c', 'select c', 'answer c', 'c', 'see', 'sea', 'three', 'third'],
+        D: ['option d', 'choice d', 'letter d', 'select d', 'answer d', 'd', 'dee', 'thee', 'four', 'fourth'],
+        E: ['option e', 'choice e', 'letter e', 'select e', 'answer e', 'e', 'yee', 'five', 'fifth'],
+        F: ['option f', 'choice f', 'letter f', 'select f', 'answer f', 'f', 'eff', 'six', 'sixth'],
+      };
+      for (const [letter, aliases] of Object.entries(aliasMap)) {
+        const matched = aliases.some((alias) => {
+          if (alias.includes(' ')) {
+            return padded.includes(` ${alias} `);
+          }
+          return tokens.includes(alias);
+        });
+        if (matched) return letter;
+      }
+      const match = normalized.match(/\b([a-f])\b/);
+      return match ? match[1].toUpperCase() : null;
+    };
+
+    const parseSpokenNumber = (raw) => {
+      if (!raw) return NaN;
+
+      const normalizeNumberText = (value) => (value || '')
+        .toString()
+        .toLowerCase()
+        .replace(/-/g, ' ')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      const map = {
+        zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5,
+        six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+        eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
+        sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
+        thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+      };
+
+      const normalized = normalizeNumberText(raw);
+      if (!normalized) return NaN;
+
+      // Digits (with or without spaces)
+      const digitsOnly = normalized.replace(/\s+/g, '');
+      if (/^\d{1,3}$/.test(digitsOnly)) {
+        return parseInt(digitsOnly, 10);
+      }
+
+      const tokens = normalized.split(' ').filter(Boolean);
+
+      // Single token direct map (e.g., seventeen)
+      if (tokens.length === 1 && map[normalized] !== undefined) {
+        return map[normalized];
+      }
+
+      // Two-token combos (e.g., "seven teen", "one seven", "twenty three")
+      if (tokens.length === 2) {
+        const [a, b] = tokens;
+        const aVal = map[a];
+        const bVal = map[b];
+
+        // "seven teen" → 17
+        if (b === 'teen' && aVal !== undefined && aVal < 10) {
+          return aVal + 10;
+        }
+
+        // "twenty three" → 23
+        if (aVal !== undefined && aVal >= 20 && aVal % 10 === 0 && bVal !== undefined && bVal < 10) {
+          return aVal + bVal;
+        }
+
+        // "one seven" → 17, "one five" → 15
+        if (aVal !== undefined && bVal !== undefined && aVal < 10 && bVal < 10) {
+          return aVal * 10 + bVal;
+        }
+      }
+
+      // Three-token case like "one seven teen" → 17
+      if (tokens.length === 3) {
+        const lastTwo = `${tokens[1]} ${tokens[2]}`;
+        const val = parseSpokenNumber(lastTwo);
+        if (!Number.isNaN(val)) return val;
+      }
+
+      return NaN;
+    };
+
+    const handleSpokenOption = (letter) => {
+      if (!currentQuestion?.options?.length) return;
+      const idx = OPTION_LABELS.indexOf(letter);
+      if (idx < 0 || idx >= currentQuestion.options.length) return;
+      optionCaptured = true;
+      sarvamAudioRef.current?.pause();
+      sarvamAudioRef.current = null;
+      updateAnswer(currentQuestion.id, letter);
+      stopRecognition();
+      setTimeout(() => {
+        nextQuestion();
+      }, 250);
+    };
+
+    const appendDictation = (text = '') => {
+      if (!text) return;
+      const normalized = text
+        .replace(/[ \t]+/g, ' ')
+        .replace(/\r/g, '');
+      if (!normalized.trim() && !/\n/.test(normalized)) return;
+      const base = currentAnswerRef.current || '';
+      const needsSpace = base && !normalized.startsWith('\n');
+      const merged = needsSpace ? `${base} ${normalized}` : `${base}${normalized}`;
+      updateAnswer(currentQuestion.id, merged);
+      noteCommand('Captured answer from speech');
+    };
+
+    const resumeRecognitionIfNeeded = () => {
+      if (!cancelled && !optionCaptured) {
+        startRecognition();
+      }
+    };
+
+    const speakWithRecognitionPause = (speaker) => {
+      if (typeof speaker !== 'function') return;
+      stopRecognition();
+      Promise.resolve(speaker())
+        .then((audio) => {
+          if (!audio) {
+            setTimeout(resumeRecognitionIfNeeded, 300);
+            return;
+          }
+          audio.onended = resumeRecognitionIfNeeded;
+        })
+        .catch(() => {
+          resumeRecognitionIfNeeded();
+        });
+    };
+
+    const extractQuestionNumber = (text) => {
+      if (!text) return null;
+      const normalized = text
+        .toLowerCase()
+        .replace(/-/g, ' ')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (!normalized) return null;
+      const tokens = normalized.split(' ').filter(Boolean);
+
+      // Walk from the end to find the most recent numeric expression
+      for (let i = tokens.length - 1; i >= 0; i -= 1) {
+        const single = tokens[i];
+        let candidate = parseSpokenNumber(single);
+        if (!Number.isNaN(candidate)) return candidate;
+
+        if (i > 0) {
+          const pair = `${tokens[i - 1]} ${tokens[i]}`;
+          candidate = parseSpokenNumber(pair);
+          if (!Number.isNaN(candidate)) return candidate;
+        }
+
+        if (i > 1) {
+          const trio = `${tokens[i - 2]} ${tokens[i - 1]} ${tokens[i]}`;
+          candidate = parseSpokenNumber(trio);
+          if (!Number.isNaN(candidate)) return candidate;
+        }
+      }
+
+      return null;
+    };
+
+    const handleCommandChunk = (chunk) => {
+      const normalized = chunk.toLowerCase();
+      if (!normalized) return false;
+
+      if (pendingQuestionNumberRef.current) {
+        const targetNum = extractQuestionNumber(normalized);
+        pendingQuestionNumberRef.current = false;
+        if (targetNum !== null) {
+          const targetIdx = targetNum - 1;
+          if (targetIdx >= 0 && targetIdx < state.questions.length) {
+            optionCaptured = true;
+            stopRecognition();
+            jumpToQuestion(targetIdx);
+            noteCommand(`Jumped to question ${targetIdx + 1}`);
+            return true;
+          }
+          noteCommand('Could not understand the question number');
+          return true;
+        }
+      }
+
+      if (normalized.includes('spell mode')) {
+        setSpellMode(true);
+        noteCommand('Spell mode on');
+        return true;
+      }
+
+      if (normalized.includes('end spell')) {
+        setSpellMode(false);
+        noteCommand('Spell mode off');
+        return true;
+      }
+
+      const matched = matchCommand(normalized);
+      if (matched) {
+        if (matched === 'stop' || matched === 'help') {
+          triggerAlarm();
+          noteCommand('Help requested');
+          return true;
+        }
+
+        if (matched === 'submit') {
+          optionCaptured = true;
+          stopRecognition();
+          confirmSubmit();
+          noteCommand('Submit requested');
+          return true;
+        }
+
+        if (matched === 'skip') {
+          const targetNum = extractQuestionNumber(normalized);
+          const expectsNumber = /\b(to|question|number)\b/.test(normalized);
+          if (targetNum !== null) {
+            const targetIdx = targetNum - 1;
+            if (targetIdx >= 0 && targetIdx < state.questions.length) {
+              optionCaptured = true;
+              stopRecognition();
+              jumpToQuestion(targetIdx);
+              noteCommand(`Jumped to question ${targetIdx + 1}`);
+              return true;
+            }
+            noteCommand('Could not understand the question number');
+            return true;
+          }
+          if (expectsNumber) {
+            pendingQuestionNumberRef.current = true;
+            noteCommand('Listening for question number');
+            return true;
+          }
+          optionCaptured = true;
+          stopRecognition();
+          nextQuestion();
+          noteCommand('Skipped question');
+          return true;
+        }
+
+        if (matched === 'repeat') {
+          if (normalized.includes('answer')) {
+            speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, currentAnswerRef.current));
+            noteCommand('Repeating answer');
+          } else if (normalized.includes('option')) {
+            speakWithRecognitionPause(() => speakQuestionAloud(currentQuestion, state.currentIndex));
+            noteCommand('Repeating options');
+          } else {
+            speakWithRecognitionPause(() => speakQuestionAloud(currentQuestion, state.currentIndex));
+            noteCommand('Repeating question');
+          }
+          return true;
+        }
+
+        if (matched === 'read back') {
+          speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, currentAnswerRef.current));
+          noteCommand('Repeating answer');
+          return true;
+        }
+
+        if (matched === 'clear') {
+          updateAnswer(currentQuestion.id, '');
+          noteCommand('Cleared answer');
+          return true;
+        }
+
+        if (matched === 'flag') {
+          toggleFlag(currentQuestion.id);
+          noteCommand('Toggled flag');
+          return true;
+        }
+
+        if (matched === 'go to') {
+          const targetNum = extractQuestionNumber(normalized);
+          if (targetNum !== null) {
+            const targetIdx = targetNum - 1;
+            if (targetIdx >= 0 && targetIdx < state.questions.length) {
+              optionCaptured = true;
+              stopRecognition();
+              jumpToQuestion(targetIdx);
+              noteCommand(`Jumped to question ${targetIdx + 1}`);
+              return true;
+            }
+            noteCommand('Could not understand the question number');
+            return true;
+          }
+          pendingQuestionNumberRef.current = true;
+          noteCommand('Listening for question number');
+          return true;
+        }
+
+        if (matched === 'start') {
+          noteCommand('Start command heard');
+          return true;
+        }
+      }
+
+      const looseTargetNum = extractQuestionNumber(normalized);
+      if (looseTargetNum !== null && normalized.includes('question')) {
+        const targetIdx = looseTargetNum - 1;
+        if (targetIdx >= 0 && targetIdx < state.questions.length) {
+          optionCaptured = true;
+          stopRecognition();
+          jumpToQuestion(targetIdx);
+          noteCommand(`Jumped to question ${targetIdx + 1}`);
+          return true;
+        }
+        noteCommand('Could not understand the question number');
+        return true;
+      }
+
+      if (spellMode) {
+        const letters = normalized
+          .replace(/[^a-z\s]/gi, ' ')
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean);
+        const allLetters = letters.length > 1 && letters.every((t) => t.length === 1 && /[a-z]/i.test(t));
+        if (allLetters) {
+          const word = letters.join('');
+          const formatted = word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+          appendDictation(formatted);
+          speakWithRecognitionPause(() => speakText(`Added word: ${formatted}`));
+          noteCommand('Spell word added');
+          return true;
+        }
+      }
+
+      const correctMatch = normalized.match(/correct\s+(.+?)\s+to\s+(.+)/i);
+      if (correctMatch) {
+        const wrong = correctMatch[1]?.trim();
+        const right = correctMatch[2]?.trim();
+        if (wrong && right && currentQuestion?.id) {
+          const current = currentAnswerRef.current || '';
+          const safeWrong = wrong.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const regex = new RegExp(safeWrong, 'i');
+          const updated = current.replace(regex, right);
+          if (updated !== current) {
+            updateAnswer(currentQuestion.id, updated);
+            speakWithRecognitionPause(() => speakText(`Corrected. The sentence now reads: ${updated}`));
+          }
+          noteCommand('Manual correction');
+          return true;
+        }
+      }
+
+      if (normalized.includes('help help help') || normalized.includes('stop stop stop')) {
+        triggerAlarm();
+        noteCommand('Help requested');
+        return true;
+      }
+
+      const finishDigits = normalized.match(/finish(?:\s+exam)?(?:\s+by)?\s*(\d{4,})/);
+      if (finishDigits) {
+        const spoken = finishDigits[1];
+        const target = (student?.registerNo || '').replace(/\D/g, '');
+        if (spoken === target && target) {
+          confirmSubmit();
+          noteCommand('Exam finished by voice');
+        } else {
+          noteCommand('Finish command rejected');
+        }
+        return true;
+      }
+
+      if (normalized.includes('delete answer')) {
+        updateAnswer(currentQuestion.id, '');
+        noteCommand('Answer cleared');
+        return true;
+      }
+
+      if (normalized.includes('delete')) {
+        const tokens = normalized.split(/\s+/).filter(Boolean);
+        const deleteIdx = tokens.indexOf('delete');
+        if (deleteIdx !== -1) {
+          const tailTokens = tokens
+            .slice(deleteIdx + 1)
+            .filter((t) => !['by', 'last', 'word', 'words'].includes(t));
+          const joined = tailTokens.join(' ').trim();
+
+          let count = 1; // default: delete last word when no number is spoken
+          if (joined) {
+            const parsed = parseSpokenNumber(joined);
+            const numericFallback = parseInt(joined, 10);
+            if (!Number.isNaN(parsed)) count = parsed;
+            else if (!Number.isNaN(numericFallback)) count = numericFallback;
+          }
+
+          if (count > 0) {
+            if (Array.isArray(currentQuestion?.options) && currentQuestion.options.length) {
+              updateAnswer(currentQuestion.id, '');
+            } else {
+              const words = (currentAnswerRef.current || '').trim().split(/\s+/).filter(Boolean);
+              if (words.length === 0) {
+                noteCommand('Nothing to delete');
+                return true;
+              }
+              const trimmed = count >= words.length ? [] : words.slice(0, words.length - count);
+              const updated = trimmed.join(' ');
+              updateAnswer(currentQuestion.id, updated);
+              speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, updated));
+            }
+            noteCommand(count === 1 ? 'Deleted last word' : `Deleted ${count} words`);
+            return true;
+          }
+        }
+      }
+
+      if (normalized.includes('scratch that')) {
+        const current = currentAnswerRef.current || '';
+        const trimmed = current.trimEnd();
+        if (trimmed) {
+          const sentences = trimmed.split(/(?<=[.!?\n])\s+/);
+          const updated = sentences.length > 1 ? sentences.slice(0, -1).join(' ') : '';
+          updateAnswer(currentQuestion.id, updated);
+          speakWithRecognitionPause(() => speakText(updated ? `Removed last sentence. Now: ${updated}` : 'Removed last sentence.'));
+        }
+        noteCommand('Scratch last sentence');
+        return true;
+      }
+
+      if (/(^|\s)clear(\s|$)/.test(normalized)) {
+        updateAnswer(currentQuestion.id, '');
+        noteCommand('Cleared answer');
+        return true;
+      }
+
+      const skipQuestionMatch = normalized.match(/skip\s+question\s+(?:number\s+)?([a-z]+|\d{1,3})/);
+      const skipToMatch = normalized.match(/skip(?:\s+to)?(?:\s+question)?\s+(?:number\s+)?([a-z]+|\d{1,3})/);
+      const skipCandidate = skipQuestionMatch || skipToMatch;
+      if (skipCandidate) {
+        const spoken = skipCandidate[1];
+        const targetIdx = parseSpokenNumber(spoken) - 1;
+        if (!Number.isNaN(targetIdx) && targetIdx >= 0 && targetIdx < state.questions.length) {
+          optionCaptured = true;
+          stopRecognition();
+          jumpToQuestion(targetIdx);
+          noteCommand(`Jumped to question ${targetIdx + 1}`);
+          return true;
+        }
+        noteCommand('Could not understand the question number');
+        return true;
+      }
+
+      if (normalized.includes('next section') || normalized.includes('skip section')) {
+        const changed = moveToNextSection();
+        if (changed) {
+          optionCaptured = true;
+          stopRecognition();
+          noteCommand('Moved to next section');
+        }
+        return true;
+      }
+
+      if (/(^|\s)skip(\s|$)/.test(normalized)) {
+        optionCaptured = true;
+        stopRecognition();
+        nextQuestion();
+        noteCommand('Skipped question');
+        return true;
+      }
+
+      if (/(^|\s)submit(\s|$)/.test(normalized)) {
+        optionCaptured = true;
+        stopRecognition();
+        confirmSubmit();
+        noteCommand('Submit requested');
+        return true;
+      }
+
+      if (normalized.includes('repeat question')) {
+        speakWithRecognitionPause(() => speakQuestionAloud(currentQuestion, state.currentIndex));
+        noteCommand('Repeating question');
+        return true;
+      }
+
+      if (normalized.includes('repeat answer')) {
+        speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, currentAnswerRef.current));
+        noteCommand('Repeating answer');
+        return true;
+      }
+
+      if (normalized.includes('repeat option') && Array.isArray(currentQuestion?.options)) {
+        speakWithRecognitionPause(() => speakQuestionAloud(currentQuestion, state.currentIndex));
+        noteCommand('Repeating options');
+        return true;
+      }
+
+      if (normalized.includes('next question')) {
+        optionCaptured = true;
+        stopRecognition();
+        nextQuestion();
+        noteCommand('Next question');
+        return true;
+      }
+
+      if (normalized.includes('previous question') || normalized.includes('go back') || normalized.includes('back question')) {
+        optionCaptured = true;
+        stopRecognition();
+        prevQuestion();
+        noteCommand('Previous question');
+        return true;
+      }
+
+      if (normalized.includes('add point')) {
+        if (Array.isArray(currentQuestion?.options) && currentQuestion.options.length) {
+          return false;
+        }
+        const bullet = '• ';
+        let updated = (currentAnswerRef.current || '').trimEnd();
+        if (!updated) {
+          updated = bullet;
+        } else {
+          if (!/[.!?]$/.test(updated)) updated = `${updated}.`;
+          updated = `${updated}\n${bullet}`;
+        }
+        updateAnswer(currentQuestion.id, updated);
+        noteCommand('Added bullet point');
+        return true;
+      }
+
+      if (normalized.includes('finish exam')) {
+        const digits = normalized.replace(/\D/g, '');
+        const target = (student?.registerNo || '').replace(/\D/g, '');
+        if (digits && target && digits === target) {
+          confirmSubmit();
+          noteCommand('Exam finished by voice');
+        } else {
+          noteCommand('Finish command rejected');
+        }
+        return true;
+      }
+
+      return false;
+    };
+
+    // Keep the latest command handler available to Web Speech callbacks
+    commandHandlerRef.current = handleCommandChunk;
+
+    const normalizePunctuation = (phrase) => {
+      if (!phrase) return '';
+      const map = [
+        { re: /\bfull\s*stop\b/gi, char: '.' },
+        { re: /\bperiod\b/gi, char: '.' },
+        { re: /\bcomma\b/gi, char: ',' },
+        { re: /\bquestion\s*mark\b/gi, char: '?' },
+        { re: /\bexclamation\s*mark\b/gi, char: '!' },
+        { re: /\bcolon\b/gi, char: ':' },
+        { re: /\bsemi\s*colon\b/gi, char: ';' },
+        { re: /\bopen\s*bracket\b/gi, char: '(' },
+        { re: /\bclose\s*bracket\b/gi, char: ')' },
+        { re: /\bopen\s*parenthesis\b/gi, char: '(' },
+        { re: /\bclose\s*parenthesis\b/gi, char: ')' },
+        { re: /\b(inverted\s*commas|double\s*quote|double\s*quotes)\b/gi, char: '"' },
+        { re: /\bdash\b/gi, char: '-' },
+        { re: /\bem\s*dash\b/gi, char: '—' },
+        { re: /\btherefore\b/gi, char: '∴' },
+        { re: /\bnew\s*line\b/gi, char: '\n' },
+        { re: /\bnew\s*paragraph\b/gi, char: '\n\n' },
+      ];
+      let out = phrase;
+      map.forEach(({ re, char }) => {
+        out = out.replace(re, char);
+      });
+      // Collapse spaces/tabs but preserve newlines inserted above
+      return out.replace(/[ \t]+/g, ' ');
+    };
+
+    const runCorrectionPipeline = async (text) => {
+      const mapped = applyPhoneticMap(text);
+      try {
+        const corrected = await correctTranscript(mapped, currentQuestion?.text || '', currentQuestion?.subject || '');
+        return corrected || mapped;
+      } catch (err) {
+        console.warn('[ExamVoice] correction failed, using mapped text', err?.message || err);
+        return mapped;
+      }
+    };
+
+    const processTranscript = async (text) => {
+      const cleaned = (text || '').trim();
+      if (!cleaned) return;
+      const segments = cleaned.split(/[.,!?]/).map((s) => s.trim()).filter(Boolean);
+      const isFiller = (phrase) => {
+        const low = phrase.toLowerCase();
+        // Drop common false positives from Whisper on silence.
+        if (low === 'thank you' || low === 'thankyou' || low === 'thanks' || low === '.') return true;
+        if (/^no+$/i.test(low)) return true;
+        if (low === 'wait' || low === 'sorry') return true;
+        return false;
+      };
+      for (const chunk of segments) {
+        if (chunk.length <= 1) continue;
+        if (isFiller(chunk)) continue;
+
+        const lowerChunk = chunk.trim().toLowerCase();
+
+        // Always attempt command handling first to avoid dumping commands into answer text
+        const handled = handleCommandChunk(chunk);
+        if (handled) continue;
+
+        const letter = detectSpokenOption(chunk);
+        if (letter) {
+          handleSpokenOption(letter);
+          break;
+        }
+
+        if (!Array.isArray(currentQuestion?.options) || !currentQuestion.options.length) {
+          const navCommands = new Set([
+            'repeat', 'skip', 'submit', 'help', 'stop', 'clear', 'delete', 'correct', 'spell', 'previous', 'finish',
+            'skip to', 'skip to question', 'next slide', 'previous slide'
+          ]);
+
+          const formattingCommands = new Set([
+            'add point', 'colon', 'semi-colon', 'semicolon', 'new line', 'new paragraph', 'dot', 'period',
+            'open bracket', 'close bracket', 'open parenthesis', 'close parenthesis'
+          ]);
+
+          // Full-phrase checks only (no partials like "new")
+          if (navCommands.has(lowerChunk)) {
+            continue;
+          }
+
+          if (formattingCommands.has(lowerChunk)) {
+            const punctuated = normalizePunctuation(chunk);
+            appendDictation(punctuated);
+            continue;
+          }
+
+          const punctuated = normalizePunctuation(chunk);
+          const corrected = await runCorrectionPipeline(punctuated || chunk);
+          appendDictation(corrected);
+        }
+      }
+    };
+
+    const startRecognition = () => {
+      if (!examMicRef.current) return;
+      stopRecognition();
+
+      // Sequential record (3 s) → Sarvam STT in-browser → process → repeat.
+      const recordOneChunk = () => {
+        if (cancelled || optionCaptured || !examMicRef.current) return;
+
+        let recorder;
+        try {
+          recorder = new MediaRecorder(examMicRef.current, { mimeType: 'audio/webm' });
+        } catch {
+          try { recorder = new MediaRecorder(examMicRef.current); }
+          catch (e) { console.warn('[ExamVoice] MediaRecorder unavailable', e); return; }
+        }
+
+        const chunks = [];
+        recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+
+        recorder.onstop = async () => {
+          optionRecognitionRef.current = null;
+          if (cancelled || optionCaptured) return;
+          if (!chunks.length) { setTimeout(recordOneChunk, 100); return; }
+
+          // Force mimeType to plain audio/webm to satisfy Sarvam's allowed list
+          const blob = new Blob(chunks, { type: 'audio/webm' });
+          try {
+            const transcript = await sarvamTranscribe(blob, langCode);
+            if (transcript) {
+              console.log('[ExamVoice] Heard:', transcript);
+              await processTranscript(transcript);
+            }
+          } catch (err) {
+            console.warn('[ExamVoice] STT failed:', err?.message || err);
+          }
+          if (!cancelled && !optionCaptured) recordOneChunk();
+        };
+
+        recorder.onerror = () => {
+          optionRecognitionRef.current = null;
+          if (!cancelled && !optionCaptured) setTimeout(recordOneChunk, 600);
+        };
+
+        try {
+          recorder.start();
+          optionRecognitionRef.current = recorder;
+          // Stop after ~3.2 s to flush the chunk faster
+          setTimeout(() => {
+            if (recorder.state === 'recording') recorder.stop();
+          }, 3200);
+        } catch (err) {
+          console.warn('[ExamVoice] Could not start recorder:', err);
+        }
+      };
+
+      recordOneChunk();
+    };
+
+    const beginQuestionFlow = () => {
+      if (sameQuestionRerun) {
+        console.log('[ExamVoice] Starting recognition (rerun same question)');
+        startRecognition();
+        return;
+      }
+
+      // Fresh question: stop any recorder before playing audio
+      stopRecognition();
+
+      Promise.resolve(speakQuestionAloud(currentQuestion, state.currentIndex))
+        .then(() => {
+          if (!cancelled && !optionCaptured) {
+            console.log('[ExamVoice] Starting recognition after question audio');
+            startRecognition();
+          }
+        })
+        .catch((err) => {
+          console.warn('[ExamVoice] Question playback failed, resuming mic', err?.message || err);
+          if (!cancelled && !optionCaptured) startRecognition();
+        });
+    };
+
+    beginQuestionFlow();
+    return () => {
+      cancelled = true;
+      stopRecognition();
+      commandHandlerRef.current = () => {};
+    };
+  }, [
+    confirmSubmit,
+    currentQuestion?.id,
+    instructionLang,
+    introCompleted,
+    jumpToQuestion,
+    nextQuestion,
+    speakAnswerAloud,
+    speakQuestionAloud,
+    state.currentIndex,
+    state.questions.length,
+    student?.registerNo,
+    triggerAlarm,
+    moveToNextSection,
+    spellMode,
+    examStarted,
+    prevQuestion,
+  ]);
+
+  if (!examStarted) {
+    return (
+      <ExamLoadingScreen
+        loadingProgress={loadingProgress}
+        totalQuestions={totalQuestions}
+        cacheReady={cacheReady}
+        onReady={() => {
+          setExamStarted(true);
+          if (state.questions?.length) {
+            lastReadQuestionRef.current = state.questions[0].id;
+            const firstQuestion = state.questions[0];
+            playQuestion(firstQuestion.id, buildQuestionVoiceText(firstQuestion, 0));
+          }
+        }}
+      />
+    );
+  }
 
   if (!currentQuestion) {
     return <div style={{ padding: '48px', textAlign: 'center' }}>Loading exam…</div>;
@@ -126,9 +1244,12 @@ export default function ExamPage() {
       <div style={{ gridColumn: 2, gridRow: 2, backgroundColor: 'var(--surface)', borderLeft: '1px solid var(--border)', padding: 16, overflowY: 'auto' }}>
         <QuestionSidebar
           questions={state.questions}
+          sections={markSections}
           answers={state.answers}
           flags={state.flags}
           currentIndex={state.currentIndex}
+          activeSectionId={activeSectionId}
+          onSectionChange={setActiveSectionId}
           onJump={jumpToQuestion}
         />
 

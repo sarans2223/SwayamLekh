@@ -2,17 +2,26 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const StudentContext = createContext();
 
+const DEFAULT_STUDENT = {
+  name: '',
+  registerNo: '',
+  disabilityMode: 'bone',
+  subjectMode: 'normal',
+  instructionLang: 'en',
+  photo: null,
+  voiceSample: null,
+};
+
 export function StudentProvider({ children }) {
   const [student, setStudent] = useState(() => {
     const saved = sessionStorage.getItem('swayam_student');
-    return saved ? JSON.parse(saved) : {
-      name: '',
-      registerNo: '',       // 8-digit registration number (canonical field)
-      disabilityMode: 'bone',
-      subjectMode: 'normal',
-      photo: null,
-      voiceSample: null,    // base64 audio blob from VoiceSampleModal
-    };
+    if (!saved) return DEFAULT_STUDENT;
+    try {
+      return { ...DEFAULT_STUDENT, ...JSON.parse(saved) };
+    } catch (err) {
+      console.warn('[student-context] Failed to parse session cache', err);
+      return DEFAULT_STUDENT;
+    }
   });
 
   useEffect(() => {

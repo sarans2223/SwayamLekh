@@ -121,10 +121,13 @@
 
 .answer-content {
   flex: 1;
-  padding: 16px;
+  padding: 18px 18px 18px 26px;
   outline: none;
-  font-size: 18px;
-  min-height: 150px;
+  font-size: 20px;
+  min-height: 260px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: pre-wrap;
 }
 
 .answer-content:empty:before {

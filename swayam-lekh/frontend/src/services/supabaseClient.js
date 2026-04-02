@@ -41,29 +41,40 @@ export const uploadPhoto = async (regNo, name, dataUrl) => {
  */
 
 export const saveVoiceProfile = async (regNo, name, commandIndex, commandText, audioBlob, features) => {
+  // [TEMPORARY DISABLE] User requested to hold off on uploading voice to DB for now
+  console.warn('[MOCK] Voice upload disabled for now.'); 
+  return true; 
+  /*
+  if (isMock) { console.warn('[MOCK] Voice upload skipped'); return true; }
   try {
-    const formData = new FormData();
-    formData.append('regNo', regNo);
-    formData.append('name', name);
-    formData.append('commandIndex', commandIndex);
-    formData.append('commandText', commandText);
-    formData.append('audio', audioBlob, 'audio.webm');
-    if (features) {
-      formData.append('features', JSON.stringify(features));
-    }
-    const response = await fetch(import.meta.env.VITE_BACKEND_URL + '/api/upload-audio', {
-      method: 'POST',
-      body: formData,
-    });
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.error || 'Upload failed');
-    }
+    const fileName = `${regNo}/cmd_${commandIndex}_${Date.now()}.webm`;
+
+    // 1️⃣ Upload audio to Supabase Storage
+    const { data: up, error: upErr } = await supabase.storage
+      .from('voice-profiles')
+      .upload(fileName, audioBlob, { contentType: 'audio/webm', upsert: true });
+
+    if (upErr) throw upErr;
+
+    // 2️⃣ Insert record into the database table for future reference/malpractice check
+    const { error: dbErr } = await supabase.from('voice_profiles').insert([{
+      register_no:   regNo,
+      student_name:  name,
+      command_index: commandIndex,
+      command_text:  commandText,
+      audio_path:    up.path,
+      features_json: features ? JSON.stringify(features) : null,
+      created_at:    new Date().toISOString(),
+    }]);
+
+    if (dbErr) throw dbErr;
+
     return true;
   } catch (err) {
     console.error('saveVoiceProfile error:', err);
     return false;
   }
+  */
 };
 
 /**
@@ -71,6 +82,10 @@ export const saveVoiceProfile = async (regNo, name, commandIndex, commandText, a
  * Returns array of rows with mfcc_features etc.
  */
 export const getVoiceProfiles = async (regNo) => {
+  // [TEMPORARY DISABLE] 
+  console.warn('[MOCK] getVoiceProfiles disabled for now — returning empty');
+  return [];
+  /*
   if (isMock) {
     console.warn('[MOCK] getVoiceProfiles — returning empty');
     return [];
@@ -84,26 +99,31 @@ export const getVoiceProfiles = async (regNo) => {
     if (error) throw error;
     return data || [];
   } catch (err) {
-    console.error('getVoiceProfiles error:', err);
     return [];
   }
+  */
 };
 
 /**
  * Log a malpractice event to the malpractice_logs table.
  */
-export const logMalpractice = async (regNo, name, similarityScore) => {
+export const logMalpractice = async (regNo, name, similarityScore, failedParams = '') => {
+  // [TEMPORARY DISABLE]
+  console.warn('[MOCK] logMalpractice disabled for now');
+  return true;
+  /*
   if (isMock) {
     console.warn('[MOCK] logMalpractice skipped');
     return true;
   }
   try {
     const { error } = await supabase.from('malpractice_logs').insert([{
-      register_no:      regNo,
-      student_name:     name,
-      detected_at:      new Date().toISOString(),
-      similarity_score: similarityScore,
-      action_taken:     'alarm_triggered',
+      register_no:       regNo,
+      student_name:      name,
+      detected_at:       new Date().toISOString(),
+      similarity_score:  similarityScore,
+      failed_parameters: failedParams,
+      action_taken:      'alarm_triggered',
     }]);
     if (error) throw error;
     return true;
@@ -111,6 +131,7 @@ export const logMalpractice = async (regNo, name, similarityScore) => {
     console.error('logMalpractice error:', err);
     return false;
   }
+  */
 };
 
 // ─── Legacy wrappers (InstructionsPage compatibility) ────────────────────────

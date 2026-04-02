@@ -52,7 +52,7 @@ export default function VoiceSetupPage() {
   const location    = useLocation();
   const { student } = useStudent();
 
-  const lang          = location.state?.lang || 'en';
+  const lang          = location.state?.lang || student?.instructionLang || 'en';
   const introAudioSrc = lang === 'ta' ? '/audio/voice_setup_ta.mp3'     : '/audio/voice_setup_en.mp3';
   const endAudioSrc   = lang === 'ta' ? '/audio/voice_setup_end_ta.mp3' : '/audio/voice_setup_end_en.mp3';
 
@@ -128,10 +128,12 @@ export default function VoiceSetupPage() {
   }
 
   // ── Upload blob ───────────────────────────────────────────────────────────
-  async function uploadBlob(idx, blob) {
+  async function uploadBlob(idx, blob, transcript) {
     setSaving(true);
     try {
-      await saveVoiceProfile(student?.registerNo, student?.name, idx, tasks[idx].id, blob, null);
+      // Pass the actual transcript (or task ID + transcript) for database recording
+      const dbText = `[${tasks[idx].id}] ${transcript}`;
+      await saveVoiceProfile(student?.registerNo, student?.name, idx, dbText, blob, null);
       setSaveMsg('Saved ✓');
     } catch {
       setSaveMsg('Save failed');
@@ -171,7 +173,7 @@ export default function VoiceSetupPage() {
     setTaskText((prev) => { const n = [...prev]; n[idx] = transcript; return n; });
 
     const blob = await stopRecorder();
-    uploadBlob(idx, blob);
+    uploadBlob(idx, blob, transcript);
 
     const nextIdx = idx + 1;
     if (nextIdx >= tasks.length) {
@@ -216,8 +218,8 @@ export default function VoiceSetupPage() {
       const idx = activeIdxRef.current;
       if (taskDoneRef.current[idx]) return;
 
-      const isFinal = e.results[e.results.length - 1].isFinal;
-      if (isFinal && tasks[idx].detect(transcript)) {
+      // Run detection on interim + final so we react immediately when the phrase is heard
+      if (tasks[idx].detect(transcript)) {
         completeTask(idx, transcript);
       }
     };

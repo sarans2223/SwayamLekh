@@ -31,7 +31,7 @@ const playAudioFile = (src, audioRef) =>
 // ─── Component ───────────────────────────────────────────────────────────────
 export default function InstructionsPage() {
   const navigate    = useNavigate();
-  const { student } = useStudent();
+  const { student, updateStudent } = useStudent();
 
   // Phases: LANGUAGE_SELECT → PLAYING → DONE
   const [phase, setPhase]           = useState('LANGUAGE_SELECT');
@@ -39,6 +39,12 @@ export default function InstructionsPage() {
   const [currentIdx, setCurrentIdx] = useState(-1);       // which command audio is playing
   const [statusMsg, setStatusMsg]   = useState('');
   const [skipTriggered, setSkipTriggered] = useState(false);
+  const handleLanguagePick = useCallback((selectedLang) => {
+    setLang(selectedLang);
+    setPhase('PLAYING');
+    updateStudent({ instructionLang: selectedLang });
+  }, [updateStudent]);
+
 
   // refs
   const abortRef     = useRef(false);   // set to true when skip navigates away / unmounts
@@ -92,16 +98,18 @@ export default function InstructionsPage() {
         .join(' ')
         .toLowerCase();
 
-      // Count occurrences in the current session
-      sessionSkips = (sessionText.match(/\bskip\b/g) || []).length;
+      // Count occurrences in the current session (very lenient check for mispronunciations)
+      const skipMatches = sessionText.match(/(skip|skips|keep|skep|scape|skeep|step|scip)/g) || [];
+      sessionSkips = skipMatches.length;
       
       const totalSkips = skipCountRef.current + sessionSkips;
 
       console.log(`[skip-listener] heard: "${sessionText.slice(-60)}" → total skips: ${totalSkips}`);
 
-      if (totalSkips >= 2) {
+      // Require only 1 successful "skip" match to trigger, providing a smoother experience
+      if (totalSkips >= 1) {
         setSkipTriggered(true);
-        setStatusMsg('🎤 "SKIP SKIP" detected — redirecting…');
+        setStatusMsg('🎤 "SKIP" detected — redirecting…');
         abortRef.current = true;   // prevent any audio restart
         setTimeout(goToNext, 500);
       }
@@ -245,12 +253,12 @@ export default function InstructionsPage() {
               <LangButton
                 flag="🇬🇧"
                 label="English"
-                onClick={() => { setLang('en'); setPhase('PLAYING'); }}
+                onClick={() => handleLanguagePick('en')}
               />
               <LangButton
                 flag="🇮🇳"
                 label="தமிழ்"
-                onClick={() => { setLang('ta'); setPhase('PLAYING'); }}
+                onClick={() => handleLanguagePick('ta')}
               />
             </div>
           </div>

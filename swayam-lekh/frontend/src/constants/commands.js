@@ -50,6 +50,18 @@ export const COMMANDS = [
     description: "Jumps directly to question number N. E.g. say 'Skip to Question Number 5'.",
     category: "COMMAND_MODE",
   },
+  {
+    command: "CORRECT [WRONG] TO [RIGHT]",
+    audioFile: null,
+    description: "Replace first occurrence of a word in your answer. E.g. 'correct newton to neutron'.",
+    category: "COMMAND_MODE",
+  },
+  {
+    command: "SPELL MODE / END SPELL",
+    audioFile: null,
+    description: "Enter spelling mode to speak letters for a word, then say 'end spell' to exit.",
+    category: "COMMAND_MODE",
+  },
 
   // EMERGENCY
   {

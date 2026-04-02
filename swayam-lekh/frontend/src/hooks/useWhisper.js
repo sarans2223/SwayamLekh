@@ -48,7 +48,9 @@ export function useWhisper({ onTranscript, onCommand, continuous = true } = {}) 
     };
 
     recognition.onerror = (event) => {
-      console.error('SpeechRecognition error:', event.error);
+      if (event.error !== 'aborted') {
+        console.error('SpeechRecognition error:', event.error);
+      }
       setListening(false);
       recognitionRef.current = null;
     };
