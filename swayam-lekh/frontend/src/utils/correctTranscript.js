@@ -2,13 +2,15 @@
  * Runs phonetic cleanup locally, then asks backend to context-correct using Groq.
  * Falls back to the locally cleaned text if the backend call fails.
  */
-export async function correctTranscript(rawText = '', questionText = '', subject = '') {
+export async function correctTranscript(rawText = '', questionText = '', subject = '', options = {}) {
   const trimmed = (rawText || '').trim();
   if (!trimmed) return '';
 
+  const { force = false } = options;
+
   const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
   // Skip Groq when utterance is too short (prevents over-correction on tokens like "colon")
-  if (trimmed.length < 12 || wordCount < 3) {
+  if (!force && (trimmed.length < 12 || wordCount < 3)) {
     return trimmed;
   }
 
@@ -36,4 +38,12 @@ export async function correctTranscript(rawText = '', questionText = '', subject
     console.warn('[correctTranscript] Falling back to phonetic output:', err?.message || err);
     return rawText;
   }
+}
+
+/**
+ * Answer-focused post-processing using Groq correction.
+ * This forces correction even for short answer chunks so domain words can still be fixed.
+ */
+export async function postProcessAnswer(rawTranscript = '', subject = '', questionText = '') {
+  return correctTranscript(rawTranscript, questionText, subject, { force: true });
 }

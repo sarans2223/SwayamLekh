@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { hasNonEmptyAnswer } from '../../utils/questionParts';
 
 export default function QuestionSidebar({
   questions = [],
@@ -52,7 +53,7 @@ export default function QuestionSidebar({
     return `${activeSection.label} • ${activeSection.marks} mark${activeSection.marks > 1 ? 's' : ''}`;
   }, [sections, activeSectionId]);
   const getStatus = (qId) => {
-    const isAnswered = !!answers[qId];
+    const isAnswered = hasNonEmptyAnswer(answers[qId]);
     const isFlagged = flags.includes(qId);
     
     if (isAnswered && isFlagged) return 'answered-flagged';

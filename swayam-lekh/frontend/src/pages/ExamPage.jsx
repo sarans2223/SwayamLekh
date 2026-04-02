@@ -7,7 +7,7 @@ import { useExamTimer } from '../hooks/useExamTimer';
 import { useWhisper } from '../hooks/useWhisper';
 import { sarvamTranscribe } from '../utils/sarvamSTT';
 import { applyPhoneticMap } from '../utils/phoneticMap';
-import { correctTranscript } from '../utils/correctTranscript';
+import { postProcessAnswer } from '../utils/correctTranscript';
 
 import ExamHeader       from '../components/exam/ExamHeader';
 import QuestionPanel    from '../components/exam/QuestionPanel';
@@ -24,6 +24,7 @@ import { startVoiceMonitoring, stopVoiceMonitoring, setMonitorStream } from '../
 import { playSarvamTTS } from '../utils/sarvamTTS';
 import { useQuestionAudioCache } from '../hooks/useQuestionAudioCache';
 import { matchCommand } from '../utils/commandMatcher';
+import { extractQuestionParts, normalizePartAnswers, getPartAnswer, setPartAnswer } from '../utils/questionParts';
 
 const MARK_SECTION_ORDER = [1, 2, 3, 5];
 const OPTION_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
@@ -67,11 +68,14 @@ export default function ExamPage() {
   const examMicRef = useRef(null);
   const hasLockedMicRef = useRef(false);
   const sarvamAudioRef = useRef(null);
+  const capitalizeNextTextRef = useRef(false);
   const optionRecognitionRef = useRef(null);
   const sttBusyRef = useRef(false);
   const introDelayRef = useRef(null);
   const commandHandlerRef = useRef(() => {});
   const pendingQuestionNumberRef = useRef(false);
+  const dictationBufferRef = useRef([]);
+  const dictationSilenceTimerRef = useRef(null);
   const [micStatus, setMicStatus] = useState('idle'); // idle | requesting | active | error
   const [micError, setMicError] = useState(null);
   const [micReady, setMicReady] = useState(false); // true once exam mic stream is open
@@ -206,20 +210,41 @@ export default function ExamPage() {
 
   const speakAnswerAloud = useCallback(async (question, answer) => {
     if (!question) return null;
+    const resolveSpokenAnswer = () => {
+      if (typeof answer === 'string') return answer;
+      if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return '';
+
+      const parts = extractQuestionParts(question?.text || '');
+      if (parts.length) {
+        const partTexts = parts
+          .map((part) => {
+            const text = getPartAnswer(answer, part.key, parts).trim();
+            return text ? `${part.label}: ${text}` : '';
+          })
+          .filter(Boolean);
+        if (partTexts.length) return partTexts.join('. ');
+      }
+
+      return Object.values(answer)
+        .filter((value) => typeof value === 'string' && value.trim())
+        .join('. ');
+    };
+
+    const spokenAnswer = resolveSpokenAnswer();
     let narration = '';
     if (Array.isArray(question.options) && question.options.length) {
-      if (!answer) {
+      if (!spokenAnswer) {
         narration = instructionLang === 'ta' ? 'இதுவரை விருப்பம் தெரிவிக்கப்படவில்லை.' : 'No option selected yet.';
       } else {
-        const idx = OPTION_LABELS.indexOf(answer);
+        const idx = OPTION_LABELS.indexOf(spokenAnswer);
         const optionText = idx >= 0 ? question.options[idx] : '';
         narration = optionText
-          ? `${instructionLang === 'ta' ? 'தேர்ந்தெடுக்கப்பட்ட விருப்பம்' : 'Selected option'} ${answer}. ${optionText}`
-          : `${instructionLang === 'ta' ? 'தேர்ந்தெடுக்கப்பட்ட விருப்பம்' : 'Selected option'} ${answer}.`;
+          ? `${instructionLang === 'ta' ? 'தேர்ந்தெடுக்கப்பட்ட விருப்பம்' : 'Selected option'} ${spokenAnswer}. ${optionText}`
+          : `${instructionLang === 'ta' ? 'தேர்ந்தெடுக்கப்பட்ட விருப்பம்' : 'Selected option'} ${spokenAnswer}.`;
       }
     } else {
-      narration = answer?.trim()
-        ? `${instructionLang === 'ta' ? 'உங்கள் பதில்' : 'Your answer'}: ${answer}`
+      narration = spokenAnswer?.trim()
+        ? `${instructionLang === 'ta' ? 'உங்கள் பதில்' : 'Your answer'}: ${spokenAnswer}`
         : instructionLang === 'ta'
           ? 'இதுவரை பதில் எழுதப்படவில்லை.'
           : 'No answer typed yet.';
@@ -374,20 +399,60 @@ export default function ExamPage() {
   }, [state.submitted]);
 
   const currentQuestion = state.questions[state.currentIndex];
-  const currentAnswer   = state.answers[currentQuestion?.id] || '';
+  const storedAnswer    = state.answers[currentQuestion?.id];
+  const questionParts   = useMemo(() => extractQuestionParts(currentQuestion?.text || ''), [currentQuestion?.text]);
+  const currentAnswer   = useMemo(() => (
+    questionParts.length ? normalizePartAnswers(storedAnswer, questionParts) : (storedAnswer || '')
+  ), [questionParts, storedAnswer]);
   const isFlagged       = currentQuestion ? state.flags.includes(currentQuestion.id) : false;
+  const [activePartKey, setActivePartKey] = useState(null);
   const currentAnswerRef = useRef(currentAnswer);
   const lastReadQuestionRef = useRef(null);
 
   useEffect(() => {
+    if (!questionParts.length) {
+      setActivePartKey(null);
+      return;
+    }
+    setActivePartKey(questionParts[0].key);
+  }, [currentQuestion?.id, questionParts]);
+
+  useEffect(() => {
     currentAnswerRef.current = currentAnswer;
   }, [currentAnswer]);
+
+  const resolveActivePartKey = useCallback(() => {
+    if (!questionParts.length) return null;
+    return activePartKey || questionParts[0]?.key || null;
+  }, [activePartKey, questionParts]);
+
+  const getActiveAnswerText = useCallback((answerValue) => {
+    if (!questionParts.length) return typeof answerValue === 'string' ? answerValue : '';
+    return getPartAnswer(answerValue, resolveActivePartKey(), questionParts);
+  }, [questionParts, resolveActivePartKey]);
+
+  const writeCurrentAnswer = useCallback((nextValue, forcedPartKey = null) => {
+    if (!currentQuestion?.id) return;
+    if (!questionParts.length) {
+      updateAnswer(currentQuestion.id, nextValue);
+      return;
+    }
+    const targetPartKey = forcedPartKey || resolveActivePartKey();
+    if (!targetPartKey) return;
+    updateAnswer(currentQuestion.id, setPartAnswer(currentAnswerRef.current, targetPartKey, nextValue, questionParts));
+  }, [currentQuestion?.id, questionParts, resolveActivePartKey, updateAnswer]);
 
   useEffect(() => {
     if (!currentQuestion || !introCompleted || !examStarted) return;
 
     const sameQuestionRerun = lastReadQuestionRef.current === currentQuestion.id;
     lastReadQuestionRef.current = currentQuestion.id;
+
+    dictationBufferRef.current = [];
+    if (dictationSilenceTimerRef.current) {
+      clearTimeout(dictationSilenceTimerRef.current);
+      dictationSilenceTimerRef.current = null;
+    }
 
     let cancelled = false;
     let optionCaptured = false;
@@ -449,6 +514,8 @@ export default function ExamPage() {
         eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
         sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
         thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+        // Common STT homophones/mishears for counts
+        oh: 0, o: 0, won: 1, to: 2, too: 2, tu: 2, tree: 3, for: 4, fore: 4, ate: 8,
       };
 
       const normalized = normalizeNumberText(raw);
@@ -513,16 +580,59 @@ export default function ExamPage() {
       }, 250);
     };
 
-    const appendDictation = (text = '') => {
-      if (!text) return;
-      const normalized = text
+    const formatDictationText = (text, capitalizeFirstLetter = false) => {
+      let out = (text || '')
         .replace(/[ \t]+/g, ' ')
-        .replace(/\r/g, '');
+        .replace(/\r/g, '')
+        .toLowerCase();
+
+      if (capitalizeFirstLetter) {
+        out = out.replace(/(^|[\n•]\s*)([a-z])/g, (match, prefix, letter) => `${prefix}${letter.toUpperCase()}`);
+      }
+
+      return out;
+    };
+
+    const handlePartCommand = (text = '') => {
+      if (!questionParts.length) return false;
+      const normalized = text.toLowerCase().replace(/\s+/g, ' ').trim();
+      const match = normalized.match(/\b(?:part|section)\s*([a-z])\b(?:\s*[:.-]?\s*(.*))?/i);
+      if (!match) return false;
+
+      const targetPartKey = match[1]?.toUpperCase();
+      if (!questionParts.some((part) => part.key === targetPartKey)) return false;
+
+      setActivePartKey(targetPartKey);
+      noteCommand(`Switched to Part ${targetPartKey}`);
+
+      const remainder = (match[2] || '').trim();
+      if (remainder) {
+        appendDictation(remainder, targetPartKey);
+      }
+
+      return true;
+    };
+
+    const appendDictation = (text = '', forcedPartKey = null) => {
+      if (!text) return;
+      const normalized = formatDictationText(text, capitalizeNextTextRef.current);
+      capitalizeNextTextRef.current = false;
       if (!normalized.trim() && !/\n/.test(normalized)) return;
+      if (questionParts.length) {
+        const targetPartKey = forcedPartKey || resolveActivePartKey();
+        if (!targetPartKey) return;
+        const base = getPartAnswer(currentAnswerRef.current, targetPartKey, questionParts);
+        const needsSpace = base && !normalized.startsWith('\n');
+        const merged = needsSpace ? `${base} ${normalized}` : `${base}${normalized}`;
+        writeCurrentAnswer(merged, targetPartKey);
+        noteCommand(`Captured answer for Part ${targetPartKey}`);
+        return;
+      }
+
       const base = currentAnswerRef.current || '';
       const needsSpace = base && !normalized.startsWith('\n');
       const merged = needsSpace ? `${base} ${normalized}` : `${base}${normalized}`;
-      updateAnswer(currentQuestion.id, merged);
+      writeCurrentAnswer(merged);
       noteCommand('Captured answer from speech');
     };
 
@@ -582,9 +692,19 @@ export default function ExamPage() {
       return null;
     };
 
+    const isAddPointCommand = (text = '') => {
+      const phrase = (text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      if (!phrase) return false;
+      return /\b(add|ad|at|hard)\s+point\b/.test(phrase) || /\bbullet\s+point\b/.test(phrase);
+    };
+
     const handleCommandChunk = (chunk) => {
       const normalized = chunk.toLowerCase();
       if (!normalized) return false;
+
+      if (handlePartCommand(normalized)) {
+        return true;
+      }
 
       if (pendingQuestionNumberRef.current) {
         const targetNum = extractQuestionNumber(normalized);
@@ -615,6 +735,38 @@ export default function ExamPage() {
         return true;
       }
 
+      // Allow implicit delete phrases like "last five words" without saying "delete".
+      const isStandaloneDelete = /\blast\b/.test(normalized)
+        && /\bwords?\b/.test(normalized)
+        && !/\bdelete\b/.test(normalized);
+      if (isStandaloneDelete) {
+        const countText = normalized
+          .replace(/\b(last|word|words)\b/g, ' ')
+          .replace(/\b(the|a|an|please)\b/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const parsedCount = countText ? parseSpokenNumber(countText) : NaN;
+        const count = !Number.isNaN(parsedCount) && parsedCount > 0 ? parsedCount : 1;
+
+        if (Array.isArray(currentQuestion?.options) && currentQuestion.options.length) {
+          writeCurrentAnswer('');
+          noteCommand('Cleared answer');
+          return true;
+        }
+
+        const words = getActiveAnswerText(currentAnswerRef.current).trim().split(/\s+/).filter(Boolean);
+        if (words.length === 0) {
+          noteCommand('Nothing to delete');
+          return true;
+        }
+        const trimmed = count >= words.length ? [] : words.slice(0, words.length - count);
+        const updated = trimmed.join(' ');
+        writeCurrentAnswer(updated);
+        speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, updated));
+        noteCommand(count === 1 ? 'Deleted last word' : `Deleted ${count} words`);
+        return true;
+      }
+
       const matched = matchCommand(normalized);
       if (matched) {
         if (matched === 'stop' || matched === 'help') {
@@ -626,8 +778,16 @@ export default function ExamPage() {
         if (matched === 'submit') {
           optionCaptured = true;
           stopRecognition();
+          nextQuestion();
+          noteCommand('Submitted answer and moved to next question');
+          return true;
+        }
+
+        if (matched === 'finish') {
+          optionCaptured = true;
+          stopRecognition();
           confirmSubmit();
-          noteCommand('Submit requested');
+          noteCommand('Exam finished');
           return true;
         }
 
@@ -679,7 +839,7 @@ export default function ExamPage() {
         }
 
         if (matched === 'clear') {
-          updateAnswer(currentQuestion.id, '');
+          writeCurrentAnswer('');
           noteCommand('Cleared answer');
           return true;
         }
@@ -687,6 +847,57 @@ export default function ExamPage() {
         if (matched === 'flag') {
           toggleFlag(currentQuestion.id);
           noteCommand('Toggled flag');
+          return true;
+        }
+
+        if (matched === 'delete') {
+          const extractDeleteCount = (phrase) => {
+            // Examples: "delete last 4 words", "delete four words", "delete last for words"
+            const explicitWords = phrase.match(/\bdelete(?:\s+last)?\s+([a-z0-9\s-]+?)\s+words?\b/);
+            if (explicitWords?.[1]) {
+              const parsed = parseSpokenNumber(explicitWords[1].trim());
+              if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+            }
+
+            const explicitDigits = phrase.match(/\bdelete(?:\s+last)?\s+(\d{1,3})\b/);
+            if (explicitDigits?.[1]) {
+              const parsed = parseInt(explicitDigits[1], 10);
+              if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+            }
+
+            const tailMatch = phrase.match(/\bdelete\b\s*(.*)$/);
+            const tail = (tailMatch?.[1] || '')
+              .replace(/\b(last|word|words|by)\b/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+
+            if (tail) {
+              const parsed = parseSpokenNumber(tail);
+              if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+
+              const digitFallback = parseInt(tail, 10);
+              if (!Number.isNaN(digitFallback) && digitFallback > 0) return digitFallback;
+            }
+
+            return 1;
+          };
+
+          if (Array.isArray(currentQuestion?.options) && currentQuestion.options.length) {
+            writeCurrentAnswer('');
+            noteCommand('Cleared answer');
+          } else {
+            const count = extractDeleteCount(normalized);
+            const words = getActiveAnswerText(currentAnswerRef.current).trim().split(/\s+/).filter(Boolean);
+            if (words.length === 0) {
+              noteCommand('Nothing to delete');
+              return true;
+            }
+            const trimmed = count >= words.length ? [] : words.slice(0, words.length - count);
+            const updated = trimmed.join(' ');
+            writeCurrentAnswer(updated);
+            speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, updated));
+            noteCommand(count === 1 ? 'Deleted last word' : `Deleted ${count} words`);
+          }
           return true;
         }
 
@@ -738,7 +949,7 @@ export default function ExamPage() {
         const allLetters = letters.length > 1 && letters.every((t) => t.length === 1 && /[a-z]/i.test(t));
         if (allLetters) {
           const word = letters.join('');
-          const formatted = word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+          const formatted = word.toLowerCase();
           appendDictation(formatted);
           speakWithRecognitionPause(() => speakText(`Added word: ${formatted}`));
           noteCommand('Spell word added');
@@ -751,12 +962,12 @@ export default function ExamPage() {
         const wrong = correctMatch[1]?.trim();
         const right = correctMatch[2]?.trim();
         if (wrong && right && currentQuestion?.id) {
-          const current = currentAnswerRef.current || '';
+          const current = getActiveAnswerText(currentAnswerRef.current);
           const safeWrong = wrong.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const regex = new RegExp(safeWrong, 'i');
           const updated = current.replace(regex, right);
           if (updated !== current) {
-            updateAnswer(currentQuestion.id, updated);
+            writeCurrentAnswer(updated);
             speakWithRecognitionPause(() => speakText(`Corrected. The sentence now reads: ${updated}`));
           }
           noteCommand('Manual correction');
@@ -770,69 +981,32 @@ export default function ExamPage() {
         return true;
       }
 
-      const finishDigits = normalized.match(/finish(?:\s+exam)?(?:\s+by)?\s*(\d{4,})/);
-      if (finishDigits) {
-        const spoken = finishDigits[1];
+      const finishByMatch = normalized.match(/\bfinish\s+by\b(.+)/);
+      if (finishByMatch) {
+        const spoken = (finishByMatch[1] || '').replace(/\D/g, '');
         const target = (student?.registerNo || '').replace(/\D/g, '');
         if (spoken === target && target) {
           confirmSubmit();
-          noteCommand('Exam finished by voice');
+          noteCommand('Exam finished by voice command');
         } else {
-          noteCommand('Finish command rejected');
+          noteCommand('Finish command rejected: roll number mismatch');
         }
         return true;
       }
 
       if (normalized.includes('delete answer')) {
-        updateAnswer(currentQuestion.id, '');
+        writeCurrentAnswer('');
         noteCommand('Answer cleared');
         return true;
       }
 
-      if (normalized.includes('delete')) {
-        const tokens = normalized.split(/\s+/).filter(Boolean);
-        const deleteIdx = tokens.indexOf('delete');
-        if (deleteIdx !== -1) {
-          const tailTokens = tokens
-            .slice(deleteIdx + 1)
-            .filter((t) => !['by', 'last', 'word', 'words'].includes(t));
-          const joined = tailTokens.join(' ').trim();
-
-          let count = 1; // default: delete last word when no number is spoken
-          if (joined) {
-            const parsed = parseSpokenNumber(joined);
-            const numericFallback = parseInt(joined, 10);
-            if (!Number.isNaN(parsed)) count = parsed;
-            else if (!Number.isNaN(numericFallback)) count = numericFallback;
-          }
-
-          if (count > 0) {
-            if (Array.isArray(currentQuestion?.options) && currentQuestion.options.length) {
-              updateAnswer(currentQuestion.id, '');
-            } else {
-              const words = (currentAnswerRef.current || '').trim().split(/\s+/).filter(Boolean);
-              if (words.length === 0) {
-                noteCommand('Nothing to delete');
-                return true;
-              }
-              const trimmed = count >= words.length ? [] : words.slice(0, words.length - count);
-              const updated = trimmed.join(' ');
-              updateAnswer(currentQuestion.id, updated);
-              speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, updated));
-            }
-            noteCommand(count === 1 ? 'Deleted last word' : `Deleted ${count} words`);
-            return true;
-          }
-        }
-      }
-
       if (normalized.includes('scratch that')) {
-        const current = currentAnswerRef.current || '';
+        const current = getActiveAnswerText(currentAnswerRef.current);
         const trimmed = current.trimEnd();
         if (trimmed) {
           const sentences = trimmed.split(/(?<=[.!?\n])\s+/);
           const updated = sentences.length > 1 ? sentences.slice(0, -1).join(' ') : '';
-          updateAnswer(currentQuestion.id, updated);
+          writeCurrentAnswer(updated);
           speakWithRecognitionPause(() => speakText(updated ? `Removed last sentence. Now: ${updated}` : 'Removed last sentence.'));
         }
         noteCommand('Scratch last sentence');
@@ -840,7 +1014,7 @@ export default function ExamPage() {
       }
 
       if (/(^|\s)clear(\s|$)/.test(normalized)) {
-        updateAnswer(currentQuestion.id, '');
+        writeCurrentAnswer('');
         noteCommand('Cleared answer');
         return true;
       }
@@ -883,8 +1057,8 @@ export default function ExamPage() {
       if (/(^|\s)submit(\s|$)/.test(normalized)) {
         optionCaptured = true;
         stopRecognition();
-        confirmSubmit();
-        noteCommand('Submit requested');
+        nextQuestion();
+        noteCommand('Submitted answer and moved to next question');
         return true;
       }
 
@@ -922,32 +1096,21 @@ export default function ExamPage() {
         return true;
       }
 
-      if (normalized.includes('add point')) {
+      if (isAddPointCommand(normalized)) {
         if (Array.isArray(currentQuestion?.options) && currentQuestion.options.length) {
           return false;
         }
         const bullet = '• ';
-        let updated = (currentAnswerRef.current || '').trimEnd();
+        let updated = getActiveAnswerText(currentAnswerRef.current).trimEnd();
         if (!updated) {
           updated = bullet;
         } else {
           if (!/[.!?]$/.test(updated)) updated = `${updated}.`;
           updated = `${updated}\n${bullet}`;
         }
-        updateAnswer(currentQuestion.id, updated);
+        writeCurrentAnswer(updated);
+        capitalizeNextTextRef.current = true;
         noteCommand('Added bullet point');
-        return true;
-      }
-
-      if (normalized.includes('finish exam')) {
-        const digits = normalized.replace(/\D/g, '');
-        const target = (student?.registerNo || '').replace(/\D/g, '');
-        if (digits && target && digits === target) {
-          confirmSubmit();
-          noteCommand('Exam finished by voice');
-        } else {
-          noteCommand('Finish command rejected');
-        }
         return true;
       }
 
@@ -957,12 +1120,61 @@ export default function ExamPage() {
     // Keep the latest command handler available to Web Speech callbacks
     commandHandlerRef.current = handleCommandChunk;
 
+    const heardPrefix = instructionLang === 'ta' ? 'நீங்கள் சொன்னது' : 'You said';
+
+    const clearDictationSilenceTimer = () => {
+      if (dictationSilenceTimerRef.current) {
+        clearTimeout(dictationSilenceTimerRef.current);
+        dictationSilenceTimerRef.current = null;
+      }
+    };
+
+    const flushDictationWords = async (words = []) => {
+      const batch = Array.isArray(words) ? words.filter(Boolean) : [];
+      if (!batch.length) return;
+      clearDictationSilenceTimer();
+      const rawText = batch.join(' ');
+      const punctuated = normalizePunctuation(rawText);
+      const corrected = await runCorrectionPipeline(punctuated || rawText);
+      appendDictation(corrected);
+      if (corrected?.trim()) {
+        speakWithRecognitionPause(() => speakText(`${heardPrefix}: ${corrected.trim()}`));
+      }
+    };
+
+    const enqueueDictationWords = async (text = '') => {
+      const words = (text || '')
+        .replace(/[^a-z0-9\s'-]/gi, ' ')
+        .split(/\s+/)
+        .filter(Boolean);
+
+      if (!words.length) return;
+
+      dictationBufferRef.current.push(...words);
+      clearDictationSilenceTimer();
+
+      while (dictationBufferRef.current.length >= 4) {
+        const batch = dictationBufferRef.current.splice(0, 4);
+        await flushDictationWords(batch);
+      }
+
+      if (dictationBufferRef.current.length) {
+        dictationSilenceTimerRef.current = setTimeout(() => {
+          const remaining = dictationBufferRef.current.splice(0, dictationBufferRef.current.length);
+          void flushDictationWords(remaining);
+        }, 2000);
+      }
+    };
+
     const normalizePunctuation = (phrase) => {
       if (!phrase) return '';
       const map = [
         { re: /\bfull\s*stop\b/gi, char: '.' },
         { re: /\bperiod\b/gi, char: '.' },
         { re: /\bcomma\b/gi, char: ',' },
+        { re: /\bcome\s*on\b/gi, char: ',' },
+        { re: /\bcome\s*ah\b/gi, char: ',' },
+        { re: /\bcome\s*ma\b/gi, char: ',' },
         { re: /\bquestion\s*mark\b/gi, char: '?' },
         { re: /\bexclamation\s*mark\b/gi, char: '!' },
         { re: /\bcolon\b/gi, char: ':' },
@@ -989,7 +1201,7 @@ export default function ExamPage() {
     const runCorrectionPipeline = async (text) => {
       const mapped = applyPhoneticMap(text);
       try {
-        const corrected = await correctTranscript(mapped, currentQuestion?.text || '', currentQuestion?.subject || '');
+        const corrected = await postProcessAnswer(mapped, currentQuestion?.subject || '', currentQuestion?.text || '');
         return corrected || mapped;
       } catch (err) {
         console.warn('[ExamVoice] correction failed, using mapped text', err?.message || err);
@@ -1001,12 +1213,23 @@ export default function ExamPage() {
       const cleaned = (text || '').trim();
       if (!cleaned) return;
       const segments = cleaned.split(/[.,!?]/).map((s) => s.trim()).filter(Boolean);
+      let skipNextQuestionLikeChunk = false;
       const isFiller = (phrase) => {
         const low = phrase.toLowerCase();
         // Drop common false positives from Whisper on silence.
         if (low === 'thank you' || low === 'thankyou' || low === 'thanks' || low === '.') return true;
         if (/^no+$/i.test(low)) return true;
         if (low === 'wait' || low === 'sorry') return true;
+        if (/^(yes|yeah|yep|ok|okay|hmm|hmmm|right|fine|alright)$/i.test(low)) return true;
+        if (/^(so\s+)?the\s+question\s+is\b/i.test(low) || /^question\s+is\b/i.test(low)) {
+          skipNextQuestionLikeChunk = true;
+          return true;
+        }
+        if (skipNextQuestionLikeChunk && /^(what|why|how|when|where|which|who|is|are|can|could|do|does|did)\b/i.test(low)) {
+          skipNextQuestionLikeChunk = false;
+          return true;
+        }
+        skipNextQuestionLikeChunk = false;
         return false;
       };
       for (const chunk of segments) {
@@ -1019,25 +1242,37 @@ export default function ExamPage() {
         const handled = handleCommandChunk(chunk);
         if (handled) continue;
 
-        const letter = detectSpokenOption(chunk);
-        if (letter) {
-          handleSpokenOption(letter);
-          break;
+        const isMcqQuestion = Array.isArray(currentQuestion?.options) && currentQuestion.options.length;
+        if (isMcqQuestion) {
+          const letter = detectSpokenOption(chunk);
+          if (letter) {
+            handleSpokenOption(letter);
+            break;
+          }
         }
 
-        if (!Array.isArray(currentQuestion?.options) || !currentQuestion.options.length) {
+        if (!isMcqQuestion) {
           const navCommands = new Set([
             'repeat', 'skip', 'submit', 'help', 'stop', 'clear', 'delete', 'correct', 'spell', 'previous', 'finish',
             'skip to', 'skip to question', 'next slide', 'previous slide'
           ]);
 
           const formattingCommands = new Set([
-            'add point', 'colon', 'semi-colon', 'semicolon', 'new line', 'new paragraph', 'dot', 'period',
+            'comma', 'come on', 'come ah', 'come ma',
+            'colon', 'semi-colon', 'semicolon', 'new line', 'new paragraph', 'dot', 'period',
             'open bracket', 'close bracket', 'open parenthesis', 'close parenthesis'
           ]);
 
           // Full-phrase checks only (no partials like "new")
           if (navCommands.has(lowerChunk)) {
+            continue;
+          }
+
+          if (lowerChunk === 'new line' || lowerChunk === 'new paragraph' || lowerChunk === 'next line' || lowerChunk === 'next paragraph') {
+            const isDoubleLine = lowerChunk === 'new paragraph' || lowerChunk === 'next paragraph';
+            const separator = isDoubleLine ? '\n\n' : '\n';
+            capitalizeNextTextRef.current = true;
+            appendDictation(separator);
             continue;
           }
 
@@ -1047,9 +1282,7 @@ export default function ExamPage() {
             continue;
           }
 
-          const punctuated = normalizePunctuation(chunk);
-          const corrected = await runCorrectionPipeline(punctuated || chunk);
-          appendDictation(corrected);
+          await enqueueDictationWords(chunk);
         }
       }
     };
@@ -1139,6 +1372,11 @@ export default function ExamPage() {
     return () => {
       cancelled = true;
       stopRecognition();
+      if (dictationSilenceTimerRef.current) {
+        clearTimeout(dictationSilenceTimerRef.current);
+        dictationSilenceTimerRef.current = null;
+      }
+      dictationBufferRef.current = [];
       commandHandlerRef.current = () => {};
     };
   }, [
@@ -1233,9 +1471,20 @@ export default function ExamPage() {
         <div style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
           <AnswerBox
             answer={currentAnswer}
-            onAnswerChange={(val) => updateAnswer(currentQuestion.id, val)}
+            onAnswerChange={(partOrValue, maybeValue) => {
+              if (questionParts.length) {
+                const partKey = partOrValue;
+                const nextValue = maybeValue ?? '';
+                updateAnswer(currentQuestion.id, setPartAnswer(currentAnswerRef.current, partKey, nextValue, questionParts));
+                return;
+              }
+              updateAnswer(currentQuestion.id, partOrValue);
+            }}
             isActive={mode === 'ANSWER'}
             subjectMode={student.subjectMode}
+            questionParts={questionParts}
+            activePartKey={activePartKey}
+            onActivePartChange={setActivePartKey}
           />
         </div>
       </div>
@@ -1252,9 +1501,6 @@ export default function ExamPage() {
           onSectionChange={setActiveSectionId}
           onJump={jumpToQuestion}
         />
-
-        {/* Voice monitoring status badge */}
-        <VoiceStatusBadge />
       </div>
 
       {/* ── Bottom bar ── */}
@@ -1304,39 +1550,3 @@ export default function ExamPage() {
   );
 }
 
-// ── Small voice status indicator shown in sidebar ─────────────────────────────
-function VoiceStatusBadge() {
-  const [active, setActive] = useState(true);
-
-  // Pulse every 2s to show it's alive (live monitoring)
-  useEffect(() => {
-    const id = setInterval(() => {
-      setActive(false);
-      setTimeout(() => setActive(true), 800);
-    }, 2000);
-    return () => clearInterval(id);
-  }, []);
-
-  return (
-    <div style={{
-      marginTop: 20, padding: '10px 14px', borderRadius: 6,
-      backgroundColor: active ? 'rgba(39,174,96,0.1)' : 'rgba(200,200,200,0.15)',
-      border: `1px solid ${active ? 'rgba(39,174,96,0.4)' : '#ddd'}`,
-      display: 'flex', alignItems: 'center', gap: 8, transition: 'all 0.4s',
-    }}>
-      <div style={{
-        width: 8, height: 8, borderRadius: '50%',
-        backgroundColor: active ? '#27ae60' : '#ccc',
-        flexShrink: 0,
-      }} />
-      <div>
-        <div style={{ fontSize: 11, fontWeight: 'bold', color: active ? '#27ae60' : '#aaa' }}>
-          Voice Monitor {active ? 'Active' : '…'}
-        </div>
-        <div style={{ fontSize: 10, color: '#bbb', marginTop: 2 }}>
-          Live voice monitoring
-        </div>
-      </div>
-    </div>
-  );
-}

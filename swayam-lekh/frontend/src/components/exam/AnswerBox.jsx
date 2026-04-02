@@ -1,16 +1,18 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useMemo } from 'react';
 import { Mic, TerminalSquare } from 'lucide-react';
 import EquationRenderer from './EquationRenderer';
+import { getPartAnswer } from '../../utils/questionParts';
 
-export default function AnswerBox({ answer = "", isActive, onAnswerChange, subjectMode }) {
+export default function AnswerBox({ answer = "", isActive, onAnswerChange, subjectMode, questionParts = [], activePartKey, onActivePartChange }) {
   const contentEditableRef = useRef(null);
+  const isPartQuestion = questionParts.length > 0;
 
   useEffect(() => {
     // Basic sync for mock purposes
-    if (contentEditableRef.current && contentEditableRef.current.innerText !== answer && !hasLatexContent(answer)) {
+    if (!isPartQuestion && contentEditableRef.current && contentEditableRef.current.innerText !== answer && !hasLatexContent(answer)) {
       contentEditableRef.current.innerText = answer;
     }
-  }, [answer]);
+  }, [answer, isPartQuestion]);
 
   const hasLatexContent = (text) => {
     return text.includes('\\') || text.includes('^') || text.includes('_');
@@ -22,7 +24,26 @@ export default function AnswerBox({ answer = "", isActive, onAnswerChange, subje
     }
   };
 
-  const wordCount = answer ? answer.trim().split(/\s+/).filter(w => w.length > 0).length : 0;
+  const wordCount = useMemo(() => {
+    if (isPartQuestion) {
+      return questionParts.reduce((total, part) => {
+        const partAnswer = getPartAnswer(answer, part.key, questionParts)
+        const words = partAnswer ? partAnswer.trim().split(/\s+/).filter((w) => w.length > 0).length : 0
+        return total + words
+      }, 0)
+    }
+    return answer ? answer.trim().split(/\s+/).filter(w => w.length > 0).length : 0
+  }, [answer, isPartQuestion, questionParts]);
+  
+  const charCount = useMemo(() => {
+    if (isPartQuestion) {
+      return questionParts.reduce((total, part) => {
+        const partAnswer = getPartAnswer(answer, part.key, questionParts)
+        return total + (partAnswer ? partAnswer.length : 0)
+      }, 0)
+    }
+    return typeof answer === 'string' ? answer.length : 0
+  }, [answer, isPartQuestion, questionParts])
   
   const containerClass = `answer-box-container ${isActive ? 'active-answer' : 'active-command'}`;
 
@@ -41,7 +62,71 @@ export default function AnswerBox({ answer = "", isActive, onAnswerChange, subje
         </div>
       </div>
       
-      {(subjectMode === 'maths' || subjectMode === 'chemistry') && answer && hasLatexContent(answer) ? (
+      {isPartQuestion ? (
+        <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ fontSize: '13px', color: 'var(--ink2)', lineHeight: 1.5 }}>
+            Say Part A or Part B to switch the active answer section.
+          </div>
+          {questionParts.map((part) => {
+            const partAnswer = getPartAnswer(answer, part.key, questionParts)
+            const isActivePart = activePartKey === part.key
+            return (
+              <label
+                key={part.key}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                  padding: '16px',
+                  borderRadius: '14px',
+                  border: `1px solid ${isActivePart ? 'var(--accent)' : 'var(--border)'}`,
+                  backgroundColor: isActivePart ? 'var(--surface2)' : 'var(--surface)',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                  <span style={{ fontWeight: 700, color: 'var(--ink)' }}>{part.label}</span>
+                  <button
+                    type="button"
+                    onClick={() => onActivePartChange?.(part.key)}
+                    style={{
+                      border: '1px solid var(--border)',
+                      background: isActivePart ? 'var(--accent)' : 'var(--surface)',
+                      color: isActivePart ? 'white' : 'var(--ink2)',
+                      borderRadius: '999px',
+                      padding: '6px 10px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {isActivePart ? 'Active' : 'Switch'}
+                  </button>
+                </div>
+                <div style={{ fontSize: '13px', color: 'var(--ink2)' }}>{part.text}</div>
+                <textarea
+                  value={partAnswer}
+                  onChange={(e) => onAnswerChange?.(part.key, e.target.value)}
+                  onFocus={() => onActivePartChange?.(part.key)}
+                  placeholder={`Answer for ${part.label}`}
+                  style={{
+                    minHeight: '120px',
+                    width: '100%',
+                    resize: 'vertical',
+                    borderRadius: '12px',
+                    border: '1px solid var(--border)',
+                    padding: '14px',
+                    fontSize: '16px',
+                    lineHeight: 1.6,
+                    color: 'var(--ink)',
+                    backgroundColor: 'var(--surface)',
+                    outline: 'none',
+                  }}
+                />
+              </label>
+            )
+          })}
+        </div>
+      ) : (subjectMode === 'maths' || subjectMode === 'chemistry') && answer && hasLatexContent(answer) ? (
         <div style={{ padding: '24px', minHeight: '150px', fontSize: '20px' }}>
           <EquationRenderer latex={answer} inline={false} />
         </div>
@@ -57,7 +142,7 @@ export default function AnswerBox({ answer = "", isActive, onAnswerChange, subje
       )}
       
       <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', fontSize: '13px', color: 'var(--ink3)', display: 'flex', justifyContent: 'space-between' }}>
-        <span>Characters: {answer.length}</span>
+        <span>Characters: {charCount}</span>
         <span>Auto-saved locally</span>
       </div>
     </div>

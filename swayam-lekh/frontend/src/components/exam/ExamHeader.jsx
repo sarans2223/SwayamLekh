@@ -26,7 +26,6 @@ export default function ExamHeader({ timeLeft = 10800, studentName, regNo }) {
     <div style={headerStyle}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
          <div style={{ padding: '4px 8px', border: '1px solid white', borderRadius: 'var(--radius)', textTransform: 'uppercase', fontSize: '11px' }}>SWAYAM LEKH</div>
-         <span>JEE PORTAL REPLICA</span>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '24px', position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>

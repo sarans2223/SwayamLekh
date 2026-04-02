@@ -18,6 +18,18 @@ const COMMAND_VARIANTS = [
     name: 'read back',
     variants: ['repeat answer', 'repeat my answer', 'read back', 'readback', 'read bag', 'red back', 'reed back', 'read my answer']
   },
+  {
+    name: 'delete',
+    variants: ['delete', 'delete last word', 'delete last', 'delete word', 'deleat', 'deeleat', 'dileet', 'each', 'each last', 'leech', 'delete words', 'dilate', 'delete last words']
+  },
+  {
+    name: 'finish',
+    variants: ['finish', 'finish exam', 'end exam', 'submit exam', 'finish now', 'end now']
+  },
+  {
+    name: 'new line',
+    variants: ['new line', 'next line', 'newline', 'new paragraph', 'next paragraph', 'new para', 'next para', 'nin line', 'next lin', 'new ligne']
+  },
   { name: 'repeat', variants: ['repeat', 'repeet', 'repete', 're peat', 'ripeat', 'repit', 'ripit'] },
   { name: 'clear', variants: ['clear', 'cleer', 'klear', 'cliar', 'kleer', 'claire'] },
   { name: 'flag', variants: ['flag', 'flab', 'fleg', 'plag', 'flug', 'plug'] },
@@ -68,14 +80,6 @@ export function matchCommand(transcript) {
     return null;
   }
 
-  // Guard: multi-word phrases with no command-like tokens should not be treated as commands
-  const words = normalized.split(' ').filter(Boolean);
-  const commandTokens = new Set(['stop', 'submit', 'skip', 'repeat', 'question', 'answer', 'option', 'clear', 'flag', 'help', 'start', 'go', 'spell', 'delete', 'finish', 'section', 'back', 'previous', 'next', 'read']);
-  if (words.length > 1 && !words.some((w) => commandTokens.has(w))) {
-    console.log(`[CommandMatcher] no match (multi-word non-command phrase): "${transcript}"`);
-    return null;
-  }
-
   // Pass 1: exact substring match against variants
   for (const cmd of COMMAND_VARIANTS) {
     for (const variant of cmd.variants) {
@@ -89,7 +93,6 @@ export function matchCommand(transcript) {
 
   // Pass 2: fuzzy match using Levenshtein when short enough
   if (!isLikelyCommand(normalized)) {
-    console.log(`[CommandMatcher] no match (too long for fuzzy): "${transcript}"`);
     return null;
   }
 
