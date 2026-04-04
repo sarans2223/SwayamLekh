@@ -11,21 +11,17 @@ const isMock = supabaseUrl.includes('placeholder');
 export const uploadPhoto = async (regNo, name, dataUrl) => {
   if (isMock) { console.warn('[MOCK] Photo upload skipped'); return true; }
   try {
-    const res      = await fetch(dataUrl);
-    const blob     = await res.blob();
-    const fileName = `${regNo}_${(name || 'student').replace(/\s+/g, '_')}_${Date.now()}.jpg`;
-
-    const { data: up, error: upErr } = await supabase.storage
-      .from('student-photos')
-      .upload(fileName, blob, { contentType: 'image/jpeg', upsert: true });
-    if (upErr) throw upErr;
-
-    await supabase.from('student_verifications').upsert({
-      register_no:  regNo,
-      student_name: name,
-      photo_path:   up.path,
-      captured_at:  new Date().toISOString(),
+    const response = await fetch('/api/upload-photo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ regNo, name, dataUrl }),
     });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || `Photo upload failed with status ${response.status}`);
+    }
+
     return true;
   } catch (err) {
     console.error('uploadPhoto error:', err);

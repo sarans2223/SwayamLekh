@@ -1,9 +1,79 @@
-import React from 'react';
-import EquationRenderer from './EquationRenderer';
+import React, { useEffect, useRef } from 'react';
+import katex from 'katex';
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D'];
 
+function MathText({ text, style }) {
+  const mathRef = useRef(null);
+
+  useEffect(() => {
+    if (!mathRef.current) return;
+    const source = text || '';
+
+    const parts = [];
+    const textRegex = /\\text\{([^{}]*)\}/g;
+    let lastIndex = 0;
+    let match;
+
+    while ((match = textRegex.exec(source)) !== null) {
+      const before = source.slice(lastIndex, match.index).trim();
+      if (before) {
+        parts.push({ type: 'math', value: before });
+      }
+      parts.push({ type: 'text', value: match[1] });
+      lastIndex = textRegex.lastIndex;
+    }
+
+    const tail = source.slice(lastIndex).trim();
+    if (tail) {
+      parts.push({ type: 'math', value: tail });
+    }
+
+    const normalizedParts = parts.length ? parts : [{ type: 'text', value: source }];
+
+    try {
+      const html = normalizedParts
+        .map((part) => {
+          if (part.type === 'text') {
+            return `<span>${part.value}</span>`;
+          }
+
+          const rendered = katex.renderToString(part.value, {
+            throwOnError: false,
+            displayMode: false,
+          });
+          return `<span class="inline-math">${rendered}</span>`;
+        })
+        .join(' ');
+
+      mathRef.current.innerHTML = html;
+
+      const katexNodes = mathRef.current.querySelectorAll('.inline-math .katex');
+      katexNodes.forEach((node) => {
+        node.style.whiteSpace = 'normal';
+        node.style.maxWidth = '100%';
+        node.style.display = 'inline';
+      });
+    } catch (_) {
+      mathRef.current.textContent = source;
+    }
+  }, [text]);
+
+  return (
+    <div
+      ref={mathRef}
+      style={{
+        ...style,
+        overflow: 'hidden',
+        maxWidth: '100%',
+        overflowX: 'hidden',
+      }}
+    />
+  );
+}
+
 export default function QuestionPanel({ question, isFlagged, onToggleFlag }) {
+
   if (!question) return null;
 
   const titleStyle = {
@@ -14,10 +84,24 @@ export default function QuestionPanel({ question, isFlagged, onToggleFlag }) {
   const questionTextStyle = {
     fontSize: '15px', lineHeight: 1.7,
     color: 'var(--ink)', marginBottom: '24px',
+    wordWrap: 'break-word',
+    overflowWrap: 'break-word',
+    whiteSpace: 'pre-wrap',
+    overflow: 'hidden',
+    maxWidth: '100%',
   };
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div
+      style={{
+        position: 'relative',
+        width: '100%',
+        maxWidth: '100%',
+        overflow: 'hidden',
+        boxSizing: 'border-box',
+        padding: '16px 20px',
+      }}
+    >
       <div style={titleStyle}>
         <span>Question {question.id}</span>
         <span style={{ fontSize: '12px', fontWeight: 'normal', color: 'var(--ink3)', border: '1px solid var(--border)', padding: '2px 8px', borderRadius: '2px' }}>
@@ -43,9 +127,7 @@ export default function QuestionPanel({ question, isFlagged, onToggleFlag }) {
         </button>
       </div>
 
-      <div style={questionTextStyle}>
-        {question.text}
-      </div>
+      <MathText text={question.text} style={questionTextStyle} />
 
       {/* MCQ Options — options is an array */}
       {question.options && Array.isArray(question.options) && (

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStudent } from '../context/StudentContext';
 import { COMMANDS } from '../constants/commands';
+import { countApproxCommandOccurrences } from '../utils/voiceCommandDetection';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const BETWEEN_AUDIO_GAP_MS = 2000; // 2-second gap between command audios
@@ -67,8 +68,8 @@ export default function InstructionsPage() {
     
     // Stop speech recognition
     try { srRef.current?.stop(); } catch (_) {}
-    navigate(NEXT_ROUTE, { state: { lang } });
-  }, [navigate, lang]);
+    navigate(NEXT_ROUTE, { state: { lang, subjectMode: student?.subjectMode } });
+  }, [navigate, lang, student?.subjectMode]);
 
   // ── Start background SKIP SKIP detection ────────────────────────────────
   // skipCountRef persists across SR session restarts so each "skip"
@@ -83,7 +84,7 @@ export default function InstructionsPage() {
     skipCountRef.current = 0;   // reset counter for this listener session
 
     const sr = new SpeechRecognition();
-    sr.lang = 'en-IN';
+    sr.lang = lang === 'ta' ? 'ta-IN' : 'en-IN';
     sr.continuous = true;
     sr.interimResults = true;
 
@@ -99,8 +100,11 @@ export default function InstructionsPage() {
         .toLowerCase();
 
       // Count occurrences in the current session (very lenient check for mispronunciations)
-      const skipMatches = sessionText.match(/(skip|skips|keep|skep|scape|skeep|step|scip)/g) || [];
-      sessionSkips = skipMatches.length;
+      sessionSkips = countApproxCommandOccurrences(
+        sessionText,
+        'skip',
+        ['skip', 'skips', 'keep', 'skep', 'scape', 'skeep', 'step', 'scip'],
+      );
       
       const totalSkips = skipCountRef.current + sessionSkips;
 
@@ -134,7 +138,7 @@ export default function InstructionsPage() {
 
     srRef.current = sr;
     try { sr.start(); } catch (_) {}
-  }, [goToNext]);
+  }, [goToNext, lang]);
 
   // ── PHASE: PLAYING ───────────────────────────────────────────────────────
   useEffect(() => {

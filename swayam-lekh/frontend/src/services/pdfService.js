@@ -96,9 +96,9 @@ function drawCoverSheet(doc, student) {
   doc.setLineDashPattern([], 0);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
-  doc.text('✂', 12, 83);
+  doc.text('Cut Here', 12, 83);
   doc.setFontSize(8);
-  doc.text('Cut Here', 16, 83);
+  doc.text(' ', 0, 0);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
@@ -142,13 +142,13 @@ function drawCoverSheet(doc, student) {
 
 function addPageHeader(doc, rollNo, pageNum) {
   doc.setLineWidth(0.2);
-  doc.rect(PAGE.margin, 10, PAGE.width - PAGE.margin * 2, 12);
+  doc.rect(PAGE.margin, 10, PAGE.width - PAGE.margin * 2, 14);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.text(`Roll No: ${safeText(rollNo)}`, PAGE.margin + 3, 17);
   doc.setFont('helvetica', 'normal');
   doc.text(`Page ${pageNum}`, PAGE.width - PAGE.margin - 3, 17, { align: 'right' });
-  doc.line(PAGE.margin, 22.5, PAGE.width - PAGE.margin, 22.5);
+  doc.line(PAGE.margin, 24, PAGE.width - PAGE.margin, 24);
 }
 
 function getSelectedOptionIndex(question, answerText) {
@@ -163,7 +163,7 @@ function getSelectedOptionIndex(question, answerText) {
 function renderAnswerPages(doc, student, questions, answers) {
   doc.addPage();
   let pageNum = 2;
-  let y = 25;
+  let y = 30;
   const contentWidth = PAGE.width - PAGE.margin * 2;
 
   addPageHeader(doc, student.registerNumber || student.registerNo, pageNum);
@@ -176,7 +176,7 @@ function renderAnswerPages(doc, student, questions, answers) {
       doc.addPage();
       pageNum += 1;
       addPageHeader(doc, student.registerNumber || student.registerNo, pageNum);
-      y = 25;
+      y = 30;
     }
 
     doc.setFont('helvetica', 'bold');
@@ -213,7 +213,7 @@ function renderAnswerPages(doc, student, questions, answers) {
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(10);
       q.options.forEach((option, idx) => {
-        const marker = selectedIndex === idx ? '►' : ' ';
+        const marker = selectedIndex === idx ? '[x]' : '[ ]';
         const optLabel = String.fromCharCode(65 + idx);
         const line = `${marker} ${optLabel}. ${option}`;
         const optionLines = doc.splitTextToSize(line, contentWidth - 3);

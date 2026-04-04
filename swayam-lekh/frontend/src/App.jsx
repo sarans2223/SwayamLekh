@@ -8,6 +8,7 @@ import InstructionsPage from './pages/InstructionsPage';
 import ExamPage from './pages/ExamPage';
 import FinishPage from './pages/FinishPage';
 import VoiceSetupPage from './pages/VoiceSetupPage';
+import MathsExamQuickPage from './pages/MathsExamQuickPage';
 
 function App() {
   return (
@@ -19,6 +20,7 @@ function App() {
             <Route path="/instructions" element={<InstructionsPage />} />
             <Route path="/voice-setup" element={<VoiceSetupPage />} />
             <Route path="/exam" element={<ExamPage />} />
+            <Route path="/exam-maths" element={<MathsExamQuickPage />} />
             <Route path="/finish" element={<FinishPage />} />
           </Routes>
         </VoiceProvider>

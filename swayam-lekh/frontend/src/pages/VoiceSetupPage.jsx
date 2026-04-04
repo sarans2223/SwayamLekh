@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useStudent } from '../context/StudentContext';
 import { saveVoiceProfile } from '../services/supabaseClient';
+import { countApproxCommandOccurrences } from '../utils/voiceCommandDetection';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const VISUALIZER_BARS = 32;
@@ -53,6 +54,7 @@ export default function VoiceSetupPage() {
   const { student } = useStudent();
 
   const lang          = location.state?.lang || student?.instructionLang || 'en';
+  const subjectMode   = location.state?.subjectMode || student?.subjectMode || 'normal';
   const introAudioSrc = lang === 'ta' ? '/audio/voice_setup_ta.mp3'     : '/audio/voice_setup_en.mp3';
   const endAudioSrc   = lang === 'ta' ? '/audio/voice_setup_end_ta.mp3' : '/audio/voice_setup_end_en.mp3';
 
@@ -62,13 +64,22 @@ export default function VoiceSetupPage() {
       id: 'stop',
       label: 'Say "STOP" three times',
       hint: 'Speak the word STOP three times clearly',
-      detect: (t) => (t.toLowerCase().match(/\bstop\b/g) || []).length >= 2,
+      // Web Speech often drops repeated words; treat two clear STOPs as a pass.
+      detect: (t) => countApproxCommandOccurrences(t, 'stop', ['stop', 'stoop', 'stopp', 'top', 'cop', 'shtop', 'estop']) >= 2,
     },
     {
       id: 'name',
       label: 'Say your name',
       hint: 'Speak your full name once clearly',
-      detect: (t) => t.trim().replace(/\s/g, '').length >= 2,
+      detect: (t) => {
+        const words = (t || '')
+          .toLowerCase()
+          .replace(/[^a-z\s]/g, ' ')
+          .split(/\s+/)
+          .filter(Boolean);
+        const nonStopWords = words.filter((w) => w !== 'stop');
+        return nonStopWords.length >= 1 && nonStopWords.join('').length >= 2;
+      },
     },
     {
       id: 'regno',
@@ -77,7 +88,7 @@ export default function VoiceSetupPage() {
       detect: (t) => extractDigits(t).length >= REG_DIGIT_COUNT,
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], []);
+  ], [subjectMode]);
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [phase, setPhase]           = useState('INTRO');  // INTRO | WAITING | LISTENING | ALLBEST | DONE
@@ -166,7 +177,11 @@ export default function VoiceSetupPage() {
 
   // ── Task completed ────────────────────────────────────────────────────────
   async function completeTask(idx, transcript) {
-    if (dead.current || taskDoneRef.current[idx]) return;
+    console.log('[task] completeTask called for idx=', idx, 'transcript=', transcript);
+    if (dead.current || taskDoneRef.current[idx]) {
+      console.log('[task] skipping - dead or already done');
+      return;
+    }
 
     taskDoneRef.current[idx] = true;
     setTaskDone([...taskDoneRef.current]);
@@ -178,6 +193,7 @@ export default function VoiceSetupPage() {
     const nextIdx = idx + 1;
     if (nextIdx >= tasks.length) {
       // ── All tasks done ──────────────────────────────────────────────────
+      console.log('[task] all tasks completed!');
       dead.current = true;
       try { srRef.current?.stop(); } catch (_) {}
       cancelAnimationFrame(rafRef.current);
@@ -190,6 +206,7 @@ export default function VoiceSetupPage() {
       setPhase('DONE');
       setTimeout(() => navigate(NEXT_ROUTE), 1200);
     } else {
+      console.log('[task] moving to next task:', nextIdx);
       activeIdxRef.current = nextIdx;
       setActiveTask(nextIdx);
       setStatusMsg(`Step ${nextIdx + 1} of ${tasks.length} — speak now`);
@@ -202,51 +219,99 @@ export default function VoiceSetupPage() {
     if (srStarted.current) return;
     srStarted.current = true;
 
+    console.log('[SR] startSR called, lang=', lang);
+
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { setStatusMsg('⚠️ Speech recognition not supported. Use Chrome.'); return; }
+    if (!SR) { 
+      console.error('[SR] Speech Recognition API not supported');
+      setStatusMsg('⚠️ Speech recognition not supported. Use Chrome.'); 
+      return; 
+    }
 
     const sr = new SR();
-    sr.lang = 'en-IN';
+    const srLang = lang === 'ta' ? 'ta-IN' : 'en-IN';
+    sr.lang = srLang;
     sr.continuous = true;
     sr.interimResults = true;
+    
+    console.log('[SR] initialized with lang:', srLang);
+
+    sr.onstart = () => {
+      console.log('[SR] onstart - speech recognition started');
+    };
 
     sr.onresult = (e) => {
       if (dead.current) return;
       const transcript = Array.from(e.results).map((r) => r[0].transcript).join(' ');
+      const isFinal = Array.from(e.results).map((r) => r.isFinal);
+      console.log('[SR] onresult:', { transcript, isFinal: isFinal[isFinal.length - 1], resultsCount: e.results.length });
       setLastTranscript(transcript);
 
       const idx = activeIdxRef.current;
-      if (taskDoneRef.current[idx]) return;
+      if (taskDoneRef.current[idx]) {
+        console.log('[SR] task already done, skipping detection');
+        return;
+      }
 
+      console.log('[SR] checking detection for task:', tasks[idx].id, 'transcript:', transcript);
       // Run detection on interim + final so we react immediately when the phrase is heard
-      if (tasks[idx].detect(transcript)) {
+      const detected = tasks[idx].detect(transcript);
+      console.log('[SR] detection result:', detected);
+      if (detected) {
+        console.log('[SR] DETECTED! Completing task:', tasks[idx].id);
         completeTask(idx, transcript);
       }
     };
 
     sr.onerror = (e) => {
-      if (e.error === 'not-allowed') { setStatusMsg('⚠️ Mic blocked by browser.'); return; }
-      if (!dead.current) { try { sr.start(); } catch (_) {} }
+      console.error('[SR] onerror:', e.error);
+      if (e.error === 'not-allowed') { 
+        console.error('[SR] Microphone permission denied');
+        setStatusMsg('⚠️ Mic blocked by browser.'); 
+        return; 
+      }
+      if (!dead.current) { 
+        console.log('[SR] restarting after error...');
+        try { sr.start(); } catch (_) {} 
+      }
     };
 
-    sr.onend = () => { if (!dead.current) { try { sr.start(); } catch (_) {} } };
+    sr.onend = () => { 
+      console.log('[SR] onend - speech recognition ended');
+      if (!dead.current) { 
+        console.log('[SR] restarting...');
+        try { sr.start(); } catch (_) {} 
+      } 
+    };
 
     srRef.current = sr;
-    try { sr.start(); } catch (_) {}
+    try { 
+      sr.start();
+      console.log('[SR] start() called successfully');
+    } catch (err) {
+      console.error('[SR] failed to start:', err);
+    }
   }
 
   // ── Enable mic + visualiser only (no SR yet — wait for intro to end) ──────
   async function startMicOnly() {
     if (dead.current) return false;
     try {
+      console.log('[mic] requesting microphone access...');
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('NOT_SUPPORTED');
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log('[mic] stream acquired:', stream.getTracks().map(t => ({ kind: t.kind, enabled: t.enabled })));
+      
       if (dead.current) { stream.getTracks().forEach((t) => t.stop()); return false; }
       streamRef.current = stream;
 
       const ctx      = new (window.AudioContext || window.webkitAudioContext)();
-      if (ctx.state === 'suspended') await ctx.resume();
+      console.log('[mic] AudioContext state:', ctx.state);
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+        console.log('[mic] AudioContext resumed');
+      }
       const source   = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 128;  // must be power of 2
@@ -255,6 +320,7 @@ export default function VoiceSetupPage() {
       drawBars();
 
       startRecorder(stream);
+      console.log('[mic] microphone setup complete');
       return true;
     } catch (err) {
       console.error('[mic-error]', err);
@@ -276,12 +342,18 @@ export default function VoiceSetupPage() {
     const aborted = { v: false };
 
     async function run() {
+      console.log('[voice-setup] entry flow started, lang=', lang);
+      
       // Step 1 — ask for mic permission early (so user isn't blocked later)
       setStatusMsg('🎤 Requesting microphone…');
       const micOk = await startMicOnly();
-      if (aborted.v || dead.current || !micOk) return;
+      if (aborted.v || dead.current || !micOk) {
+        console.log('[voice-setup] mic setup failed or aborted');
+        return;
+      }
 
       // Step 2 — play intro audio fully; mic is ON but SR is NOT started yet
+      console.log('[voice-setup] mic ok, starting intro audio');
       setPhase('WAITING');
       setStatusMsg('🔊 Playing introduction audio…');
       const { blocked: isBlocked, el } = await playAudioStart(introAudioSrc);
@@ -289,6 +361,7 @@ export default function VoiceSetupPage() {
       if (aborted.v || dead.current) return;
 
       if (isBlocked) {
+        console.log('[voice-setup] intro audio blocked by browser');
         blockedAudio.current = el;
         setBlocked(true);
         setPhase('INTRO');
@@ -297,6 +370,7 @@ export default function VoiceSetupPage() {
       }
 
       // Wait for intro to fully finish before starting SR
+      console.log('[voice-setup] waiting for intro audio to finish');
       await new Promise((res) => {
         if (!el) { res(); return; }
         if (el.ended) { res(); return; }
@@ -304,9 +378,13 @@ export default function VoiceSetupPage() {
         el.onerror = res;
       });
 
-      if (aborted.v || dead.current) return;
+      if (aborted.v || dead.current) {
+        console.log('[voice-setup] aborted before SR start');
+        return;
+      }
 
       // Step 3 — now start SR (intro is done, won't false-detect)
+      console.log('[voice-setup] intro finished, starting SR');
       setPhase('LISTENING');
       setStatusMsg('Step 1 of 3 — speak now');
       startSR();
@@ -319,12 +397,16 @@ export default function VoiceSetupPage() {
 
   // ── Manual start (autoplay blocked) ───────────────────────────────────────
   async function handleManualStart() {
+    console.log('[voice-setup] manual start triggered');
     setBlocked(false);
 
     if (!streamRef.current) {
       // Mic hasn't been set up yet — do it now with user gesture
       const micOk = await startMicOnly();
-      if (!micOk || dead.current) return;
+      if (!micOk || dead.current) {
+        console.log('[voice-setup] mic setup failed in manual start');
+        return;
+      }
     }
 
     setPhase('WAITING');
@@ -336,6 +418,7 @@ export default function VoiceSetupPage() {
     }
     if (dead.current) return;
 
+    console.log('[voice-setup] manual start - starting SR');
     setPhase('LISTENING');
     setStatusMsg('Step 1 of 3 — speak now');
     startSR();

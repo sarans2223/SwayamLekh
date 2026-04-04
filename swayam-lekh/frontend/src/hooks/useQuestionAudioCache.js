@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
+import { latexToSpeakable } from '../utils/latexToSpeakable'
 
 export function useQuestionAudioCache() {
   const audioCache = useRef({})
@@ -24,7 +25,8 @@ export function useQuestionAudioCache() {
     }
   }, [])
 
-  async function fetchQuestionAudio(questionText) {
+  async function fetchQuestionAudio(questionText, { isMaths = false } = {}) {
+    const speakableText = latexToSpeakable(questionText)
     const response = await fetch('https://api.sarvam.ai/text-to-speech', {
       method: 'POST',
       headers: {
@@ -32,11 +34,11 @@ export function useQuestionAudioCache() {
         'api-subscription-key': import.meta.env.VITE_SARVAM_API_KEY,
       },
       body: JSON.stringify({
-        inputs: [questionText],
+        inputs: [speakableText],
         target_language_code: 'en-IN',
         speaker: 'anushka',
         pitch: 0,
-        pace: 0.95,
+        pace: isMaths ? 0.75 : 0.95,
         loudness: 1.5,
         speech_sample_rate: 22050,
         enable_preprocessing: true,
@@ -89,7 +91,7 @@ export function useQuestionAudioCache() {
 
     for (const question of questions) {
       try {
-        const base64Audio = await fetchQuestionAudio(question.text)
+        const base64Audio = await fetchQuestionAudio(question.text, { isMaths: !!question.isMaths })
         storeQuestionAudio(question.id, base64Audio)
         loaded++
         setLoadingProgress(loaded)
@@ -105,34 +107,78 @@ export function useQuestionAudioCache() {
     setCacheReady(true)
   }, [])
 
-  const playQuestion = useCallback(async (questionId, questionText) => {
+  const playQuestion = useCallback(async (questionId, questionText, { isMaths = false } = {}) => {
     if (currentAudioRef.current) {
       currentAudioRef.current.pause()
       currentAudioRef.current.currentTime = 0
+      currentAudioRef.current = null
     }
 
     const playFromEntry = (entry) => new Promise((resolve) => {
       if (!entry?.src) {
-        browserSpeak(questionText)
-        resolve()
+        browserSpeak(questionText, { isMaths }).finally(resolve)
         return
       }
 
-      const audio = entry.audio || new Audio(entry.src)
+      const audio = new Audio(entry.src)
       audio.preload = 'auto'
-      audio.load()
       audio.currentTime = 0
+      audio.volume = 1
+      audio.muted = false
       currentAudioRef.current = audio
-      audio.onended = resolve
-      audio.onerror = (err) => {
-        console.warn(`Audio playback error for question ${questionId}:`, err)
-        browserSpeak(questionText)
+
+      let settled = false
+      let started = false
+      const settle = () => {
+        if (settled) return
+        settled = true
+        if (currentAudioRef.current === audio) {
+          currentAudioRef.current = null
+        }
         resolve()
       }
+
+      const fallbackToBrowserTTS = () => {
+        browserSpeak(questionText, { isMaths }).finally(settle)
+      }
+
+      audio.onplaying = () => {
+        started = true
+      }
+      audio.onended = settle
+      audio.onerror = (err) => {
+        console.warn(`Audio playback error for question ${questionId}:`, err)
+        fallbackToBrowserTTS()
+      }
+
+      const startupWatchdog = setTimeout(() => {
+        if (!started && audio.paused) {
+          console.warn(`Audio startup timeout for question ${questionId}; falling back to browser TTS`)
+          fallbackToBrowserTTS()
+        }
+      }, 1500)
+
+      const clearWatchdog = () => clearTimeout(startupWatchdog)
+      const originalOnPlaying = audio.onplaying
+      const originalOnEnded = audio.onended
+      const originalOnError = audio.onerror
+      audio.onplaying = (...args) => {
+        clearWatchdog()
+        if (typeof originalOnPlaying === 'function') originalOnPlaying(...args)
+      }
+      audio.onended = (...args) => {
+        clearWatchdog()
+        if (typeof originalOnEnded === 'function') originalOnEnded(...args)
+      }
+      audio.onerror = (...args) => {
+        clearWatchdog()
+        if (typeof originalOnError === 'function') originalOnError(...args)
+      }
+
       audio.play().catch((err) => {
+        clearWatchdog()
         console.warn(`Audio play promise rejected for question ${questionId}:`, err)
-        browserSpeak(questionText)
-        resolve()
+        fallbackToBrowserTTS()
       })
     })
 
@@ -145,13 +191,13 @@ export function useQuestionAudioCache() {
 
     console.warn(`Cache miss for question ${questionId} — calling Sarvam live`)
     try {
-      const base64Live = await fetchQuestionAudio(questionText)
+      const base64Live = await fetchQuestionAudio(questionText, { isMaths })
       const liveEntry = storeQuestionAudio(questionId, base64Live)
       console.log(`Live fetch stored for question ${questionId}`)
       return playFromEntry(liveEntry)
     } catch (error) {
       console.error(`Sarvam live fetch failed for question ${questionId}:`, error)
-      browserSpeak(questionText)
+      return browserSpeak(questionText, { isMaths })
     }
   }, [])
 
@@ -173,14 +219,40 @@ export function useQuestionAudioCache() {
   }
 }
 
-function browserSpeak(text) {
+function browserSpeak(text, { isMaths = false } = {}) {
   const synth = window.speechSynthesis
-  synth.cancel()
-  const utt = new SpeechSynthesisUtterance(text)
-  utt.lang = 'en-IN'
-  utt.rate = 0.9
-  utt.pitch = 1
-  synth.speak(utt)
+
+  return new Promise((resolve) => {
+    if (!synth) {
+      resolve()
+      return
+    }
+
+    synth.cancel()
+    const utt = new SpeechSynthesisUtterance(latexToSpeakable(text))
+    utt.lang = 'en-IN'
+    utt.rate = isMaths ? 0.78 : 0.9
+    utt.pitch = 1
+
+    let settled = false
+    const done = () => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+
+    const safety = setTimeout(done, 12000)
+    utt.onend = () => {
+      clearTimeout(safety)
+      done()
+    }
+    utt.onerror = () => {
+      clearTimeout(safety)
+      done()
+    }
+
+    synth.speak(utt)
+  })
 }
 
 function buildAudioSrc(base64) {
