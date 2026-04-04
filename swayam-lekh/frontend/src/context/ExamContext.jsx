@@ -1,12 +1,26 @@
-import React, { createContext, useContext, useReducer } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useReducer } from 'react';
 import { SAMPLE_QUESTIONS } from '../data/sampleQuestions';
+import { MATHS_SAMPLE_QUESTIONS } from '../data/mathsSampleQuestions';
 
 const ExamContext = createContext();
 
 const EXAM_DURATION = 10800; // 3 hours in seconds
 
+const getInitialQuestions = () => {
+  try {
+    const saved = sessionStorage.getItem('swayam_student');
+    if (saved) {
+      const student = JSON.parse(saved);
+      if (student?.subjectMode === 'maths') return MATHS_SAMPLE_QUESTIONS;
+    }
+  } catch (err) {
+    console.warn('[exam-context] Failed to read saved student profile', err);
+  }
+  return SAMPLE_QUESTIONS;
+};
+
 const initialState = {
-  questions: SAMPLE_QUESTIONS,
+  questions: getInitialQuestions(),
   currentIndex: 0,
   answers: {},       // { [questionId]: string }
   flags: [],         // array of flagged questionIds
@@ -28,6 +42,14 @@ function examReducer(state, action) {
       return { ...state, currentIndex: action.payload };
     case 'UPDATE_ANSWER':
       return { ...state, answers: { ...state.answers, [action.questionId]: action.answer } };
+    case 'SET_QUESTIONS':
+      return {
+        ...state,
+        questions: action.questions,
+        currentIndex: 0,
+        answers: {},
+        flags: [],
+      };
     case 'TOGGLE_FLAG': {
       const flagged = state.flags.includes(action.questionId);
       return { ...state, flags: flagged ? state.flags.filter(id => id !== action.questionId) : [...state.flags, action.questionId] };
@@ -50,29 +72,45 @@ function examReducer(state, action) {
 export function ExamProvider({ children }) {
   const [state, dispatch] = useReducer(examReducer, initialState);
 
-  const nextQuestion = () => dispatch({ type: 'NEXT_QUESTION' });
-  const prevQuestion = () => dispatch({ type: 'PREV_QUESTION' });
-  const jumpToQuestion = (idx) => dispatch({ type: 'JUMP_TO_QUESTION', payload: idx });
-  const updateAnswer = (questionId, answer) => dispatch({ type: 'UPDATE_ANSWER', questionId, answer });
-  const toggleFlag = (questionId) => dispatch({ type: 'TOGGLE_FLAG', questionId });
-  const triggerAlarm = () => dispatch({ type: 'TRIGGER_ALARM' });
-  const dismissAlarm = () => dispatch({ type: 'DISMISS_ALARM' });
-  const submitExam = () => dispatch({ type: 'SHOW_SECURITY_MODAL' });
-  const confirmSubmit = () => dispatch({ type: 'SUBMIT_EXAM' });
+  const nextQuestion = useCallback(() => dispatch({ type: 'NEXT_QUESTION' }), []);
+  const prevQuestion = useCallback(() => dispatch({ type: 'PREV_QUESTION' }), []);
+  const jumpToQuestion = useCallback((idx) => dispatch({ type: 'JUMP_TO_QUESTION', payload: idx }), []);
+  const updateAnswer = useCallback((questionId, answer) => dispatch({ type: 'UPDATE_ANSWER', questionId, answer }), []);
+  const setQuestions = useCallback((questions) => dispatch({ type: 'SET_QUESTIONS', questions }), []);
+  const toggleFlag = useCallback((questionId) => dispatch({ type: 'TOGGLE_FLAG', questionId }), []);
+  const triggerAlarm = useCallback(() => dispatch({ type: 'TRIGGER_ALARM' }), []);
+  const dismissAlarm = useCallback(() => dispatch({ type: 'DISMISS_ALARM' }), []);
+  const submitExam = useCallback(() => dispatch({ type: 'SHOW_SECURITY_MODAL' }), []);
+  const confirmSubmit = useCallback(() => dispatch({ type: 'SUBMIT_EXAM' }), []);
+
+  const value = useMemo(() => ({
+    state,
+    nextQuestion,
+    prevQuestion,
+    jumpToQuestion,
+    updateAnswer,
+    setQuestions,
+    toggleFlag,
+    triggerAlarm,
+    dismissAlarm,
+    submitExam,
+    confirmSubmit,
+  }), [
+    state,
+    nextQuestion,
+    prevQuestion,
+    jumpToQuestion,
+    updateAnswer,
+    setQuestions,
+    toggleFlag,
+    triggerAlarm,
+    dismissAlarm,
+    submitExam,
+    confirmSubmit,
+  ]);
 
   return (
-    <ExamContext.Provider value={{
-      state,
-      nextQuestion,
-      prevQuestion,
-      jumpToQuestion,
-      updateAnswer,
-      toggleFlag,
-      triggerAlarm,
-      dismissAlarm,
-      submitExam,
-      confirmSubmit,
-    }}>
+    <ExamContext.Provider value={value}>
       {children}
     </ExamContext.Provider>
   );

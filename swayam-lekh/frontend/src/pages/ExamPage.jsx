@@ -4,10 +4,8 @@ import { useExam } from '../context/ExamContext';
 import { useStudent } from '../context/StudentContext';
 import { useVoice } from '../context/VoiceContext';
 import { useExamTimer } from '../hooks/useExamTimer';
-import { useWhisper } from '../hooks/useWhisper';
 import { sarvamTranscribe } from '../utils/sarvamSTT';
 import { applyPhoneticMap } from '../utils/phoneticMap';
-import { postProcessAnswer } from '../utils/correctTranscript';
 
 import ExamHeader       from '../components/exam/ExamHeader';
 import QuestionPanel    from '../components/exam/QuestionPanel';
@@ -23,24 +21,14 @@ import ExamLoadingScreen from '../components/exam/ExamLoadingScreen';
 import { startVoiceMonitoring, stopVoiceMonitoring, setMonitorStream } from '../utils/voiceMonitor';
 import { playSarvamTTS } from '../utils/sarvamTTS';
 import { useQuestionAudioCache } from '../hooks/useQuestionAudioCache';
-import { matchCommand } from '../utils/commandMatcher';
+import { detectVoiceCommand } from '../utils/voiceCommandMatcher';
 import { extractQuestionParts, normalizePartAnswers, getPartAnswer, setPartAnswer } from '../utils/questionParts';
+import { MATHS_SAMPLE_QUESTIONS } from '../data/mathsSampleQuestions';
+import { buildQuestionVoiceText } from '../utils/questionSpeech';
+import { isTTSPlaying } from '../utils/audioState.js';
 
 const MARK_SECTION_ORDER = [1, 2, 3, 5];
 const OPTION_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
-
-const buildQuestionVoiceText = (question, idx) => {
-  const base = (question?.text || '').trim();
-  const qNumber = Number.isInteger(idx) && idx >= 0 ? `Question ${idx + 1}. ` : '';
-  if (!Array.isArray(question?.options) || !question.options.length) return `${qNumber}${base}`.trim();
-
-  const optionsReadout = question.options
-    .slice(0, OPTION_LABELS.length)
-    .map((opt, i) => `Option ${OPTION_LABELS[i]}: ${opt}`)
-    .join('. ');
-
-  return optionsReadout ? `${qNumber}${base}. ${optionsReadout}` : `${qNumber}${base}`;
-};
 
 export default function ExamPage() {
   const navigate = useNavigate();
@@ -50,6 +38,7 @@ export default function ExamPage() {
     prevQuestion,
     jumpToQuestion,
     updateAnswer,
+    setQuestions,
     toggleFlag,
     submitExam,
     confirmSubmit,
@@ -72,7 +61,6 @@ export default function ExamPage() {
   const optionRecognitionRef = useRef(null);
   const sttBusyRef = useRef(false);
   const introDelayRef = useRef(null);
-  const commandHandlerRef = useRef(() => {});
   const pendingQuestionNumberRef = useRef(false);
   const dictationBufferRef = useRef([]);
   const dictationSilenceTimerRef = useRef(null);
@@ -83,6 +71,13 @@ export default function ExamPage() {
   const [spellMode, setSpellMode] = useState(false);
   const [examStarted, setExamStarted] = useState(false);
 
+  useEffect(() => {
+    const isMathsMode = student?.subjectMode === 'maths';
+    if (isMathsMode) {
+      setQuestions(MATHS_SAMPLE_QUESTIONS);
+    }
+  }, [setQuestions, student?.subjectMode]);
+
   const {
     preloadAllQuestions,
     playQuestion,
@@ -91,21 +86,6 @@ export default function ExamPage() {
     totalQuestions,
     cacheReady,
   } = useQuestionAudioCache();
-
-  const {
-    listening: commandListening,
-    start: startWebSpeech,
-    stop: stopWebSpeech,
-    supported: webSpeechSupported,
-  } = useWhisper({
-    onCommand: (text) => {
-      const cleaned = (text || '').trim();
-      if (!cleaned) return;
-      commandHandlerRef.current(cleaned);
-    },
-    onTranscript: () => {},
-    continuous: true,
-  });
 
   const startPersistentMic = useCallback(async () => {
     if (hasLockedMicRef.current || examMicRef.current) return;
@@ -163,7 +143,11 @@ export default function ExamPage() {
   const langCode = instructionLang === 'ta' ? 'ta-IN' : 'en-IN';
 
   const audioQuestions = useMemo(() => (
-    (state.questions || []).map((q, idx) => ({ id: q.id, text: buildQuestionVoiceText(q, idx) }))
+    (state.questions || []).map((q, idx) => ({
+      id: q.id,
+      text: buildQuestionVoiceText(q, idx),
+      isMaths: q.subject === 'maths',
+    }))
   ), [state.questions]);
 
   useEffect(() => {
@@ -176,18 +160,10 @@ export default function ExamPage() {
     if (examStarted || !cacheReady || !state.questions?.length) return;
     setExamStarted(true);
     lastReadQuestionRef.current = state.questions[0].id;
-    playQuestion(state.questions[0].id, buildQuestionVoiceText(state.questions[0], 0));
+    playQuestion(state.questions[0].id, buildQuestionVoiceText(state.questions[0], 0), {
+      isMaths: state.questions[0]?.subject === 'maths',
+    });
   }, [cacheReady, examStarted, playQuestion, state.questions]);
-
-  // Start Web Speech solely for command/option detection; dictation stays on Groq/Sarvam.
-  useEffect(() => {
-    if (!webSpeechSupported) return undefined;
-    if (!introCompleted || !micReady) return undefined;
-    startWebSpeech();
-    return () => {
-      stopWebSpeech();
-    };
-  }, [introCompleted, micReady, startWebSpeech, stopWebSpeech, webSpeechSupported]);
 
   const noteCommand = useCallback((reason) => {
     if (reason) setLastCommand?.(reason);
@@ -205,7 +181,9 @@ export default function ExamPage() {
   const speakQuestionAloud = useCallback(async (question, idx) => {
     if (!question) return null;
     const numberIdx = Number.isInteger(idx) ? idx : undefined;
-    return playQuestion(question.id, buildQuestionVoiceText(question, numberIdx));
+    return playQuestion(question.id, buildQuestionVoiceText(question, numberIdx), {
+      isMaths: question.subject === 'maths',
+    });
   }, [playQuestion]);
 
   const speakAnswerAloud = useCallback(async (question, answer) => {
@@ -701,6 +679,8 @@ export default function ExamPage() {
     const handleCommandChunk = (chunk) => {
       const normalized = chunk.toLowerCase();
       if (!normalized) return false;
+      const commandWordCount = normalized.split(/\s+/).filter(Boolean).length;
+      const isLikelyStandaloneCommand = commandWordCount <= 4;
 
       if (handlePartCommand(normalized)) {
         return true;
@@ -723,13 +703,13 @@ export default function ExamPage() {
         }
       }
 
-      if (normalized.includes('spell mode')) {
+      if (/(^|\s)spell\s+mode(\s|$)/.test(normalized)) {
         setSpellMode(true);
         noteCommand('Spell mode on');
         return true;
       }
 
-      if (normalized.includes('end spell')) {
+      if (/(^|\s)end\s+spell(\s|$)/.test(normalized)) {
         setSpellMode(false);
         noteCommand('Spell mode off');
         return true;
@@ -767,7 +747,7 @@ export default function ExamPage() {
         return true;
       }
 
-      const matched = matchCommand(normalized);
+      const matched = detectVoiceCommand(normalized);
       if (matched) {
         if (matched === 'stop' || matched === 'help') {
           triggerAlarm();
@@ -1013,7 +993,7 @@ export default function ExamPage() {
         return true;
       }
 
-      if (/(^|\s)clear(\s|$)/.test(normalized)) {
+      if (/(^|\s)clear(\s|$)/.test(normalized) && isLikelyStandaloneCommand) {
         writeCurrentAnswer('');
         noteCommand('Cleared answer');
         return true;
@@ -1117,9 +1097,6 @@ export default function ExamPage() {
       return false;
     };
 
-    // Keep the latest command handler available to Web Speech callbacks
-    commandHandlerRef.current = handleCommandChunk;
-
     const heardPrefix = instructionLang === 'ta' ? 'நீங்கள் சொன்னது' : 'You said';
 
     const clearDictationSilenceTimer = () => {
@@ -1200,13 +1177,7 @@ export default function ExamPage() {
 
     const runCorrectionPipeline = async (text) => {
       const mapped = applyPhoneticMap(text);
-      try {
-        const corrected = await postProcessAnswer(mapped, currentQuestion?.subject || '', currentQuestion?.text || '');
-        return corrected || mapped;
-      } catch (err) {
-        console.warn('[ExamVoice] correction failed, using mapped text', err?.message || err);
-        return mapped;
-      }
+      return mapped;
     };
 
     const processTranscript = async (text) => {
@@ -1237,6 +1208,14 @@ export default function ExamPage() {
         if (isFiller(chunk)) continue;
 
         const lowerChunk = chunk.trim().toLowerCase();
+
+        const letterTokens = lowerChunk.split(/\s+/).filter(Boolean);
+        const isLetterByLetterNoise = !spellMode
+          && letterTokens.length >= 5
+          && letterTokens.every((token) => token.length === 1 && /[a-z]/i.test(token));
+        if (isLetterByLetterNoise) {
+          continue;
+        }
 
         // Always attempt command handling first to avoid dumping commands into answer text
         const handled = handleCommandChunk(chunk);
@@ -1307,6 +1286,11 @@ export default function ExamPage() {
         recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
 
         recorder.onstop = async () => {
+          if (isTTSPlaying()) {
+            console.log('[ExamVoice] Ignoring chunk - TTS is playing');
+            if (!cancelled && !optionCaptured) recordOneChunk();
+            return;
+          }
           optionRecognitionRef.current = null;
           if (cancelled || optionCaptured) return;
           if (!chunks.length) { setTimeout(recordOneChunk, 100); return; }
@@ -1356,16 +1340,21 @@ export default function ExamPage() {
       stopRecognition();
 
       Promise.resolve(speakQuestionAloud(currentQuestion, state.currentIndex))
-        .then(() => {
-          if (!cancelled && !optionCaptured) {
-            console.log('[ExamVoice] Starting recognition after question audio');
-            startRecognition();
-          }
-        })
-        .catch((err) => {
-          console.warn('[ExamVoice] Question playback failed, resuming mic', err?.message || err);
-          if (!cancelled && !optionCaptured) startRecognition();
-        });
+  .then(() => {
+    return new Promise(resolve => setTimeout(resolve, 1200))
+  })
+  .then(() => {
+    if (!cancelled && !optionCaptured) {
+      console.log('[ExamVoice] Starting recognition after question audio + buffer');
+      startRecognition();
+    }
+  })
+  .catch((err) => {
+    console.warn('[ExamVoice] Question playback failed, resuming mic', err?.message || err);
+    if (!cancelled && !optionCaptured) {
+      setTimeout(() => startRecognition(), 1200)
+    }
+  });
     };
 
     beginQuestionFlow();
@@ -1377,7 +1366,6 @@ export default function ExamPage() {
         dictationSilenceTimerRef.current = null;
       }
       dictationBufferRef.current = [];
-      commandHandlerRef.current = () => {};
     };
   }, [
     confirmSubmit,
@@ -1409,7 +1397,9 @@ export default function ExamPage() {
           if (state.questions?.length) {
             lastReadQuestionRef.current = state.questions[0].id;
             const firstQuestion = state.questions[0];
-            playQuestion(firstQuestion.id, buildQuestionVoiceText(firstQuestion, 0));
+            playQuestion(firstQuestion.id, buildQuestionVoiceText(firstQuestion, 0), {
+              isMaths: firstQuestion.subject === 'maths',
+            });
           }
         }}
       />
@@ -1460,15 +1450,15 @@ export default function ExamPage() {
       </div>
 
       {/* ── Main: Question + Answer ── */}
-      <div style={{ gridColumn: 1, gridRow: 2, display: 'flex', flexDirection: 'column', padding: 24, overflowY: 'auto', gap: 16 }}>
-        <div style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', padding: 24, borderRadius: 'var(--radius-md)' }}>
+      <div style={{ gridColumn: 1, gridRow: 2, display: 'flex', flexDirection: 'column', padding: 24, overflowY: 'auto', overflowX: 'hidden', gap: 16, minWidth: 0 }}>
+        <div style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', padding: 24, borderRadius: 'var(--radius-md)', maxWidth: '100%', overflowX: 'hidden', boxSizing: 'border-box' }}>
           <QuestionPanel
             question={currentQuestion}
             isFlagged={isFlagged}
             onToggleFlag={() => toggleFlag(currentQuestion.id)}
           />
         </div>
-        <div style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+        <div style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden', maxWidth: '100%', boxSizing: 'border-box' }}>
           <AnswerBox
             answer={currentAnswer}
             onAnswerChange={(partOrValue, maybeValue) => {

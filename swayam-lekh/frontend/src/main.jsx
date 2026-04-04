@@ -7,8 +7,7 @@ import './styles/variables.css';
 import './styles/globals.css';
 import './styles/animations.css';
 
-console.log("Main entry point. Clearing session storage for fresh JEE overhaul test.");
-sessionStorage.clear();
+console.log("Main entry point loaded.");
 
 try {
   const rootElement = document.getElementById('root');

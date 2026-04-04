@@ -43,6 +43,13 @@ const COMMAND_VARIANTS = [
 
 const normalize = (text) => (text || '').toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').replace(/\s+/g, ' ').trim();
 
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const hasStandalonePhrase = (text, phrase) => {
+  const pattern = new RegExp(`(^|\\s)${escapeRegex(phrase).replace(/\\\s+/g, '\\s+')}($|\\s)`);
+  return pattern.test(text);
+};
+
 const levenshtein = (a, b) => {
   if (a === b) return 0;
   if (!a.length) return b.length;
@@ -80,11 +87,19 @@ export function matchCommand(transcript) {
     return null;
   }
 
+  const words = normalized.split(' ').filter(Boolean);
+
   // Pass 1: exact substring match against variants
   for (const cmd of COMMAND_VARIANTS) {
     for (const variant of cmd.variants) {
       const variantNorm = normalize(variant);
-      if (variantNorm && normalized.includes(variantNorm)) {
+      if (!variantNorm) continue;
+
+      // Only accept phrase hits when the utterance is command-like,
+      // so plain dictation like "...it is clear that..." does not trigger.
+      const variantWords = variantNorm.split(' ').filter(Boolean).length;
+      const isCommandLikeLength = words.length <= Math.max(4, variantWords + 2);
+      if (hasStandalonePhrase(normalized, variantNorm) && isCommandLikeLength) {
         console.log(`[CommandMatcher] exact match: ${cmd.name} via "${variant}" in "${transcript}"`);
         return cmd.name;
       }
