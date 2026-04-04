@@ -4,10 +4,10 @@ const OPTION_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
 function normalizeMathSymbols(text) {
   return latexToSpeakable((text || '')
-    .replace(/\^/g, ' to the power of ')
     .replace(/÷/g, ' divided by ')
     .replace(/×/g, ' times ')
     .replace(/→/g, ' goes to ')
+    .replace(/-/g, ' minus ')
     .replace(/−/g, ' minus ')
     .replace(/=/g, ' equals ')
     .replace(/\[/g, ' open bracket ')
@@ -31,7 +31,10 @@ export function buildQuestionVoiceText(question, idx) {
   const promptText = normalizeMathSymbols(question?.prompt || '');
   const bodyText = normalizeMathSymbols(question?.text || '');
 
-  const baseText = promptText || bodyText;
+  const promptLower = promptText.toLowerCase();
+  const bodyLower = bodyText.toLowerCase();
+  const shouldIncludePrompt = promptText && (!bodyLower || !bodyLower.includes(promptLower));
+  const baseText = [shouldIncludePrompt ? promptText : '', bodyText].filter(Boolean).join('. ');
   if (!baseText) return qNumber.trim();
 
   if (!Array.isArray(question?.options) || !question.options.length) {

@@ -250,6 +250,7 @@ export const PHONETIC_DICTIONARY = {
   "disiplin": "discipline",
   "dissiplin": "discipline",
   "benefic": "benefits",
+  "benifit":"benefits",
   "benefic staff":"benefits of",
 
   // Question 6 — Water Cycle

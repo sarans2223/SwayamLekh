@@ -50,9 +50,17 @@ function MathText({ text, style }) {
 
       const katexNodes = mathRef.current.querySelectorAll('.inline-math .katex');
       katexNodes.forEach((node) => {
-        node.style.whiteSpace = 'normal';
+        node.style.whiteSpace = 'nowrap';
         node.style.maxWidth = '100%';
-        node.style.display = 'inline';
+        node.style.display = 'inline-block';
+        node.style.fontFamily = 'var(--font-sans)';
+        node.style.fontStyle = 'normal';
+        node.style.letterSpacing = 'normal';
+      });
+
+      const nonItalicMathNodes = mathRef.current.querySelectorAll('.inline-math .mathnormal, .inline-math .mathit');
+      nonItalicMathNodes.forEach((node) => {
+        node.style.fontStyle = 'normal';
       });
     } catch (_) {
       mathRef.current.textContent = source;
@@ -84,6 +92,9 @@ export default function QuestionPanel({ question, isFlagged, onToggleFlag }) {
   const questionTextStyle = {
     fontSize: '15px', lineHeight: 1.7,
     color: 'var(--ink)', marginBottom: '24px',
+    fontFamily: 'var(--font-sans)',
+    fontStyle: 'normal',
+    letterSpacing: '0.01em',
     wordWrap: 'break-word',
     overflowWrap: 'break-word',
     whiteSpace: 'pre-wrap',

@@ -4,10 +4,8 @@ import { useExam } from '../context/ExamContext';
 import { useStudent } from '../context/StudentContext';
 import { useVoice } from '../context/VoiceContext';
 import { useExamTimer } from '../hooks/useExamTimer';
-import { useWhisper } from '../hooks/useWhisper';
 import { sarvamTranscribe } from '../utils/sarvamSTT';
 import { applyPhoneticMap } from '../utils/phoneticMap';
-import { postProcessAnswer } from '../utils/correctTranscript';
 
 import ExamHeader       from '../components/exam/ExamHeader';
 import QuestionPanel    from '../components/exam/QuestionPanel';
@@ -27,6 +25,7 @@ import { detectVoiceCommand } from '../utils/voiceCommandMatcher';
 import { extractQuestionParts, normalizePartAnswers, getPartAnswer, setPartAnswer } from '../utils/questionParts';
 import { MATHS_SAMPLE_QUESTIONS } from '../data/mathsSampleQuestions';
 import { buildQuestionVoiceText } from '../utils/questionSpeech';
+import { isTTSPlaying } from '../utils/audioState.js';
 
 const MARK_SECTION_ORDER = [1, 2, 3, 5];
 const OPTION_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
@@ -62,7 +61,6 @@ export default function ExamPage() {
   const optionRecognitionRef = useRef(null);
   const sttBusyRef = useRef(false);
   const introDelayRef = useRef(null);
-  const commandHandlerRef = useRef(() => {});
   const pendingQuestionNumberRef = useRef(false);
   const dictationBufferRef = useRef([]);
   const dictationSilenceTimerRef = useRef(null);
@@ -88,22 +86,6 @@ export default function ExamPage() {
     totalQuestions,
     cacheReady,
   } = useQuestionAudioCache();
-
-  const {
-    listening: commandListening,
-    start: startWebSpeech,
-    stop: stopWebSpeech,
-    supported: webSpeechSupported,
-  } = useWhisper({
-    lang: instructionLang === 'ta' ? 'ta-IN' : 'en-IN',
-    onCommand: (text) => {
-      const cleaned = (text || '').trim();
-      if (!cleaned) return;
-      commandHandlerRef.current(cleaned);
-    },
-    onTranscript: () => {},
-    continuous: true,
-  });
 
   const startPersistentMic = useCallback(async () => {
     if (hasLockedMicRef.current || examMicRef.current) return;
@@ -182,16 +164,6 @@ export default function ExamPage() {
       isMaths: state.questions[0]?.subject === 'maths',
     });
   }, [cacheReady, examStarted, playQuestion, state.questions]);
-
-  // Start Web Speech solely for command/option detection; dictation stays on Groq/Sarvam.
-  useEffect(() => {
-    if (!webSpeechSupported) return undefined;
-    if (!introCompleted || !micReady) return undefined;
-    startWebSpeech();
-    return () => {
-      stopWebSpeech();
-    };
-  }, [introCompleted, micReady, startWebSpeech, stopWebSpeech, webSpeechSupported]);
 
   const noteCommand = useCallback((reason) => {
     if (reason) setLastCommand?.(reason);
@@ -1125,9 +1097,6 @@ export default function ExamPage() {
       return false;
     };
 
-    // Keep the latest command handler available to Web Speech callbacks
-    commandHandlerRef.current = handleCommandChunk;
-
     const heardPrefix = instructionLang === 'ta' ? 'நீங்கள் சொன்னது' : 'You said';
 
     const clearDictationSilenceTimer = () => {
@@ -1208,13 +1177,7 @@ export default function ExamPage() {
 
     const runCorrectionPipeline = async (text) => {
       const mapped = applyPhoneticMap(text);
-      try {
-        const corrected = await postProcessAnswer(mapped, currentQuestion?.subject || '', currentQuestion?.text || '');
-        return corrected || mapped;
-      } catch (err) {
-        console.warn('[ExamVoice] correction failed, using mapped text', err?.message || err);
-        return mapped;
-      }
+      return mapped;
     };
 
     const processTranscript = async (text) => {
@@ -1323,6 +1286,11 @@ export default function ExamPage() {
         recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
 
         recorder.onstop = async () => {
+          if (isTTSPlaying()) {
+            console.log('[ExamVoice] Ignoring chunk - TTS is playing');
+            if (!cancelled && !optionCaptured) recordOneChunk();
+            return;
+          }
           optionRecognitionRef.current = null;
           if (cancelled || optionCaptured) return;
           if (!chunks.length) { setTimeout(recordOneChunk, 100); return; }
@@ -1372,16 +1340,21 @@ export default function ExamPage() {
       stopRecognition();
 
       Promise.resolve(speakQuestionAloud(currentQuestion, state.currentIndex))
-        .then(() => {
-          if (!cancelled && !optionCaptured) {
-            console.log('[ExamVoice] Starting recognition after question audio');
-            startRecognition();
-          }
-        })
-        .catch((err) => {
-          console.warn('[ExamVoice] Question playback failed, resuming mic', err?.message || err);
-          if (!cancelled && !optionCaptured) startRecognition();
-        });
+  .then(() => {
+    return new Promise(resolve => setTimeout(resolve, 1200))
+  })
+  .then(() => {
+    if (!cancelled && !optionCaptured) {
+      console.log('[ExamVoice] Starting recognition after question audio + buffer');
+      startRecognition();
+    }
+  })
+  .catch((err) => {
+    console.warn('[ExamVoice] Question playback failed, resuming mic', err?.message || err);
+    if (!cancelled && !optionCaptured) {
+      setTimeout(() => startRecognition(), 1200)
+    }
+  });
     };
 
     beginQuestionFlow();
@@ -1393,7 +1366,6 @@ export default function ExamPage() {
         dictationSilenceTimerRef.current = null;
       }
       dictationBufferRef.current = [];
-      commandHandlerRef.current = () => {};
     };
   }, [
     confirmSubmit,

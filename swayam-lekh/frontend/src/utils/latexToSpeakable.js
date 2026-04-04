@@ -8,7 +8,11 @@ export function latexToSpeakable(input = '') {
   text = text.replace(/\\frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}/g, '$1 divided by $2');
   text = text.replace(/\\lim_\{\s*([^{}]+)\s*\\to\s*([^{}]+)\s*\}/g, 'limit $1 tends to $2');
 
+  // Implicit multiplication like 5x or 2y.
+  text = text.replace(/(\d)([a-zA-Z])/g, '$1 multiplied by $2');
+
   // Powers.
+  text = text.replace(/([a-zA-Z0-9])\s*\^\s*([0-9]+)/g, '$1 raised to the power $2');
   text = text.replace(/\^2\b/g, ' squared');
   text = text.replace(/\^3\b/g, ' cubed');
   text = text.replace(/\^\{\s*([^{}]+)\s*\}/g, ' raised to the power $1');

@@ -40,10 +40,19 @@ function playAudioFull(src) {
 function playAudioStart(src) {
   return new Promise((resolve) => {
     const a = new Audio(src);
-    a.onerror   = () => resolve({ ok: false, blocked: false, el: a });
-    a.onplaying = () => resolve({ ok: true,  blocked: false, el: a });
-    a.play().catch(() => resolve({ ok: false, blocked: true, el: a }));
-    setTimeout(() => resolve({ ok: true, blocked: false, el: a }), 1500);
+    let settled = false;
+    const done = (payload) => {
+      if (settled) return;
+      settled = true;
+      resolve({ ...payload, el: a });
+    };
+
+    a.onerror   = () => done({ ok: false, blocked: false });
+    a.onplaying = () => done({ ok: true, blocked: false });
+    a.play().catch(() => done({ ok: false, blocked: true }));
+
+    // If neither onplaying nor play rejection arrives quickly, treat as playback failure.
+    setTimeout(() => done({ ok: false, blocked: false }), 5000);
   });
 }
 
@@ -243,9 +252,17 @@ export default function VoiceSetupPage() {
     sr.onresult = (e) => {
       if (dead.current) return;
       const transcript = Array.from(e.results).map((r) => r[0].transcript).join(' ');
+      const recentTranscript = transcript
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .split(' ')
+        .slice(-12)
+        .join(' ');
       const isFinal = Array.from(e.results).map((r) => r.isFinal);
-      console.log('[SR] onresult:', { transcript, isFinal: isFinal[isFinal.length - 1], resultsCount: e.results.length });
-      setLastTranscript(transcript);
+      console.log('[SR] onresult:', { transcript: recentTranscript, isFinal: isFinal[isFinal.length - 1], resultsCount: e.results.length });
+      setLastTranscript(recentTranscript);
 
       const idx = activeIdxRef.current;
       if (taskDoneRef.current[idx]) {
@@ -253,13 +270,13 @@ export default function VoiceSetupPage() {
         return;
       }
 
-      console.log('[SR] checking detection for task:', tasks[idx].id, 'transcript:', transcript);
+      console.log('[SR] checking detection for task:', tasks[idx].id, 'transcript:', recentTranscript);
       // Run detection on interim + final so we react immediately when the phrase is heard
-      const detected = tasks[idx].detect(transcript);
+      const detected = tasks[idx].detect(recentTranscript);
       console.log('[SR] detection result:', detected);
       if (detected) {
         console.log('[SR] DETECTED! Completing task:', tasks[idx].id);
-        completeTask(idx, transcript);
+        completeTask(idx, recentTranscript);
       }
     };
 
@@ -356,7 +373,7 @@ export default function VoiceSetupPage() {
       console.log('[voice-setup] mic ok, starting intro audio');
       setPhase('WAITING');
       setStatusMsg('🔊 Playing introduction audio…');
-      const { blocked: isBlocked, el } = await playAudioStart(introAudioSrc);
+      const { ok: introStarted, blocked: isBlocked, el } = await playAudioStart(introAudioSrc);
 
       if (aborted.v || dead.current) return;
 
@@ -366,6 +383,15 @@ export default function VoiceSetupPage() {
         setBlocked(true);
         setPhase('INTRO');
         setStatusMsg('Tap the button below to start');
+        return;
+      }
+
+      if (!introStarted) {
+        console.log('[voice-setup] intro audio could not be started');
+        blockedAudio.current = el;
+        setBlocked(true);
+        setPhase('INTRO');
+        setStatusMsg('Could not play introduction audio. Tap Start to retry.');
         return;
       }
 

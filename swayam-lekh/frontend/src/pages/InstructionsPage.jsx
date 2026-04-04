@@ -13,20 +13,32 @@ const introAudio = (lang) =>
   lang === 'ta' ? '/audio/intro_ta.mp3' : '/audio/intro_en.mp3';
 
 const cmdAudio = (cmd, lang) =>
-  lang === 'ta'
-    ? cmd.audioFile.replace('.mp3', '_ta.mp3')
-    : cmd.audioFile;
+  !cmd?.audioFile
+    ? null
+    : lang === 'ta'
+      ? cmd.audioFile.replace('.mp3', '_ta.mp3')
+      : cmd.audioFile;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const delay = (ms) => new Promise((res) => setTimeout(res, ms));
 
 const playAudioFile = (src, audioRef) =>
   new Promise((resolve) => {
+    if (!src) {
+      resolve(true);
+      return;
+    }
+    let settled = false;
+    const done = (ok) => {
+      if (settled) return;
+      settled = true;
+      resolve(ok);
+    };
     const a = new Audio(src);
     if (audioRef) audioRef.current = a;
-    a.onended = resolve;
-    a.onerror = () => { console.warn('[audio] missing, skipping:', src); resolve(); };
-    a.play().catch(() => resolve());
+    a.onended = () => done(true);
+    a.onerror = () => { console.warn('[audio] missing, skipping:', src); done(true); };
+    a.play().catch(() => done(false));
   });
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -40,6 +52,9 @@ export default function InstructionsPage() {
   const [currentIdx, setCurrentIdx] = useState(-1);       // which command audio is playing
   const [statusMsg, setStatusMsg]   = useState('');
   const [skipTriggered, setSkipTriggered] = useState(false);
+  const [micReady, setMicReady] = useState(false);
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  const [playbackAttempt, setPlaybackAttempt] = useState(0);
   const handleLanguagePick = useCallback((selectedLang) => {
     setLang(selectedLang);
     setPhase('PLAYING');
@@ -77,9 +92,13 @@ export default function InstructionsPage() {
   const skipCountRef = useRef(0);
 
   const startSkipListener = useCallback(() => {
+    if (!lang) return;
     const SpeechRecognition =
       window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+    if (!SpeechRecognition) {
+      setStatusMsg('Speech recognition not supported in this browser. Use Chrome or Edge, or click Skip Instructions.');
+      return;
+    }
 
     skipCountRef.current = 0;   // reset counter for this listener session
 
@@ -92,6 +111,8 @@ export default function InstructionsPage() {
 
     sr.onresult = (e) => {
       if (abortRef.current) return;
+      // Ignore recognizer text while app audio is actively playing.
+      if (currentAudioRef.current && !currentAudioRef.current.paused) return;
 
       // Combine all results (final + interim) for this session
       const sessionText = Array.from(e.results)
@@ -110,8 +131,8 @@ export default function InstructionsPage() {
 
       console.log(`[skip-listener] heard: "${sessionText.slice(-60)}" → total skips: ${totalSkips}`);
 
-      // Require only 1 successful "skip" match to trigger, providing a smoother experience
-      if (totalSkips >= 1) {
+      // Require at least 2 matches to reduce accidental trigger from ambient speech.
+      if (totalSkips >= 2) {
         setSkipTriggered(true);
         setStatusMsg('🎤 "SKIP" detected — redirecting…');
         abortRef.current = true;   // prevent any audio restart
@@ -120,6 +141,10 @@ export default function InstructionsPage() {
     };
 
     sr.onerror = (e) => {
+      if (e.error === 'audio-capture') {
+        setStatusMsg('Microphone not detected. Check mic connection/permissions, then click Skip Instructions.');
+        return;
+      }
       if (e.error === 'not-allowed') return;
       if (!abortRef.current) {
         skipCountRef.current += sessionSkips;  // commit the skips we heard in this session
@@ -140,15 +165,43 @@ export default function InstructionsPage() {
     try { sr.start(); } catch (_) {}
   }, [goToNext, lang]);
 
+  const ensureMicPermission = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setStatusMsg('Microphone is not supported in this browser.');
+      setMicReady(false);
+      return false;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+      setMicReady(true);
+      return true;
+    } catch (err) {
+      setMicReady(false);
+      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+        setStatusMsg('Microphone permission denied. Allow mic access in browser settings or click Skip Instructions.');
+      } else {
+        setStatusMsg('Microphone not detected. Check device and permissions, or click Skip Instructions.');
+      }
+      return false;
+    }
+  }, []);
+
   // ── PHASE: PLAYING ───────────────────────────────────────────────────────
   useEffect(() => {
     if (phase !== 'PLAYING') return;
     abortRef.current = false;
+    setAudioBlocked(false);
 
     const run = async () => {
       // 1️⃣ Play intro audio
       setStatusMsg(lang === 'ta' ? 'அறிமுக ஆடியோ இயக்கப்படுகிறது…' : 'Playing introduction audio…');
-      await playAudioFile(introAudio(lang), currentAudioRef);
+      const introOk = await playAudioFile(introAudio(lang), currentAudioRef);
+      if (!introOk) {
+        setAudioBlocked(true);
+        setStatusMsg(lang === 'ta' ? '🔈 ஆடியோ தடைப்பட்டது. Start Audio அழுத்தவும்.' : '🔈 Audio was blocked by browser. Click Start Audio.');
+        return;
+      }
       if (abortRef.current) return;
 
       await delay(BETWEEN_AUDIO_GAP_MS);
@@ -189,18 +242,20 @@ export default function InstructionsPage() {
 
     run();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
+  }, [phase, playbackAttempt, lang]);
 
   // ── Start skip listener once language is chosen ──────────────────────────
   useEffect(() => {
     if (phase === 'PLAYING') {
-      startSkipListener();
+      ensureMicPermission().then((ok) => {
+        if (ok && !abortRef.current) startSkipListener();
+      });
     }
     return () => {
       // cleanup on unmount
       try { srRef.current?.stop(); } catch (_) {}
     };
-  }, [phase, startSkipListener]);
+  }, [phase, startSkipListener, ensureMicPermission]);
 
   // ── Cleanup on unmount ───────────────────────────────────────────────────
   useEffect(() => {
@@ -289,6 +344,30 @@ export default function InstructionsPage() {
                   ? '"SKIP SKIP" என்று சொல்லுங்கள் அல்லது மேலே உள்ள Skip பட்டனை அழுத்துங்கள்'
                   : 'Say "SKIP SKIP" or click the Skip button above to proceed'}
               </div>
+              {audioBlocked && (
+                <button
+                  onClick={() => setPlaybackAttempt((v) => v + 1)}
+                  style={{
+                    marginTop: 10,
+                    padding: '10px 16px',
+                    borderRadius: 6,
+                    border: 'none',
+                    backgroundColor: '#1a3a5c',
+                    color: '#fff',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {lang === 'ta' ? '▶ Start Audio' : '▶ Start Audio'}
+                </button>
+              )}
+              {!micReady && (
+                <div style={{ ...S.skipHint, marginTop: 8, backgroundColor: '#fff6e5', color: '#9a6700', border: '1px solid #f6d592' }}>
+                  {lang === 'ta'
+                    ? '🎤 மைக்ரோஃபோன் அனுமதி இல்லையெனில், குரல் மூலம் SKIP வேலை செய்யாமல் இருக்கலாம்.'
+                    : '🎤 If microphone permission is blocked, voice SKIP may not work.'}
+                </div>
+              )}
             </div>
 
             {/* Command rows — audio-only, no recording UI */}
