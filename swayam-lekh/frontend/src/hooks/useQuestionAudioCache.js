@@ -38,7 +38,7 @@ export function useQuestionAudioCache() {
         target_language_code: 'en-IN',
         speaker: 'anushka',
         pitch: 0,
-        pace: isMaths ? 0.75 : 0.95,
+        pace: isMaths ? 0.75 : 0.85,
         loudness: 1.5,
         speech_sample_rate: 22050,
         enable_preprocessing: true,
@@ -231,7 +231,7 @@ function browserSpeak(text, { isMaths = false } = {}) {
     synth.cancel()
     const utt = new SpeechSynthesisUtterance(latexToSpeakable(text))
     utt.lang = 'en-IN'
-    utt.rate = isMaths ? 0.78 : 0.9
+    utt.rate = isMaths ? 0.75 : 0.82
     utt.pitch = 1
 
     let settled = false
