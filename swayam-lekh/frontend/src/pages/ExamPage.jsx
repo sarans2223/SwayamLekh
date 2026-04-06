@@ -66,6 +66,7 @@ export default function ExamPage() {
   const pendingQuestionNumberRef = useRef(false);
   const dictationBufferRef = useRef([]);
   const dictationSilenceTimerRef = useRef(null);
+  const lastReadQuestionRef = useRef(null);
   const [micStatus, setMicStatus] = useState('idle'); // idle | requesting | active | error
   const [micError, setMicError] = useState(null);
   const [micReady, setMicReady] = useState(false); // true once exam mic stream is open
@@ -73,6 +74,10 @@ export default function ExamPage() {
   const [activeSectionId, setActiveSectionId] = useState('all');
   const [spellMode, setSpellMode] = useState(false);
   const [examStarted, setExamStarted] = useState(false);
+
+  const closeCommandList = useCallback(() => {
+    setShowCommandList(false);
+  }, []);
 
   useEffect(() => {
     const isMathsMode = student?.subjectMode === 'maths';
@@ -388,7 +393,6 @@ export default function ExamPage() {
   const isFlagged       = currentQuestion ? state.flags.includes(currentQuestion.id) : false;
   const [activePartKey, setActivePartKey] = useState(null);
   const currentAnswerRef = useRef(currentAnswer);
-  const lastReadQuestionRef = useRef(null);
 
   useEffect(() => {
     if (!questionParts.length) {
@@ -1340,11 +1344,6 @@ export default function ExamPage() {
       recordOneChunk();
     };
 
-    const closeCommandList = () => {
-      setShowCommandList(false);
-      startRecognition();
-    };
-
     const beginQuestionFlow = () => {
       if (sameQuestionRerun) {
         console.log('[ExamVoice] Starting recognition (rerun same question)');
@@ -1532,16 +1531,61 @@ export default function ExamPage() {
         />
       )}
 
-      <Modal isOpen={showCommandList} onClose={closeCommandList} title="Voice Command Guide" size="lg">
-        <div style={{ display: 'grid', gap: 14 }}>
-          {COMMANDS.map((cmd) => (
-            <div key={cmd.command} style={{ padding: 16, borderRadius: 12, backgroundColor: 'var(--surface2)', border: '1px solid var(--border)' }}>
-              <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--accent)', marginBottom: 8 }}>{cmd.command}</div>
-              <div style={{ color: 'var(--ink2)', lineHeight: 1.5 }}>{cmd.description}</div>
-            </div>
-          ))}
-          <div style={{ marginTop: 6, fontSize: 14, color: 'var(--ink3)' }}>
-            Say "list the commands" to open this guide anytime while in the exam.
+      <Modal isOpen={showCommandList} onClose={closeCommandList} title="Voice Command Guide" size="xl">
+        <div style={{ lineHeight: 1.5, fontSize: 13, color: 'var(--ink)' }}>
+          <p style={{ marginBottom: 14, fontSize: 14, fontStyle: 'italic', color: 'var(--accent)' }}>
+            Sure! Here is a list of my voice commands. Listen for the one you need:
+          </p>
+
+          <div style={{ marginBottom: 12 }}>
+            <h3 style={{ fontWeight: 700, marginBottom: 6, fontSize: 13, color: 'var(--accent)' }}>QUESTION NAVIGATION:</h3>
+            <ul style={{ listStyle: 'none', paddingLeft: 0, margin: 0 }}>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• NEXT QUESTION</li>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• PREVIOUS QUESTION</li>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• SKIP</li>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• GO TO QUESTION NUMBER</li>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• SKIP TO QUESTION NUMBER</li>
+            </ul>
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <h3 style={{ fontWeight: 700, marginBottom: 6, fontSize: 13, color: 'var(--accent)' }}>ANSWER WRITING CONTROL:</h3>
+            <ul style={{ listStyle: 'none', paddingLeft: 0, margin: 0 }}>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• START ANSWER</li>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• STOP ANSWER</li>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• CLEAR</li>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• DELETE ANSWER</li>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• DELETE LAST NUMBER WORDS</li>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• ADD POINT</li>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• NEW LINE</li>
+            </ul>
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <h3 style={{ fontWeight: 700, marginBottom: 6, fontSize: 13, color: 'var(--accent)' }}>ACCESSIBILITY / REPEAT:</h3>
+            <ul style={{ listStyle: 'none', paddingLeft: 0, margin: 0 }}>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• REPEAT QUESTION</li>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• REPEAT ANSWER</li>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• REPEAT OPTIONS</li>
+            </ul>
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <h3 style={{ fontWeight: 700, marginBottom: 6, fontSize: 13, color: 'var(--accent)' }}>TIME AND STATUS:</h3>
+            <ul style={{ listStyle: 'none', paddingLeft: 0, margin: 0 }}>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• TIME LEFT</li>
+            </ul>
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <h3 style={{ fontWeight: 700, marginBottom: 6, fontSize: 13, color: 'var(--accent)' }}>HELP:</h3>
+            <ul style={{ listStyle: 'none', paddingLeft: 0, margin: 0 }}>
+              <li style={{ paddingLeft: 16, marginBottom: 3 }}>• HELP HELP HELP</li>
+            </ul>
+          </div>
+
+          <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--border)', fontSize: 12, color: 'var(--ink3)' }}>
+            Say "list commands" to open this guide anytime while in the exam.
           </div>
         </div>
       </Modal>

@@ -39,7 +39,7 @@ const COMMAND_VARIANTS = [
   },
   {
     name: 'list commands',
-    variants: ['list the commands', 'list commands', 'show commands', 'show the commands', 'command list', 'commands list']
+    variants: ['list commands', 'list the commands', 'show commands', 'show the commands', 'command list', 'commands list']
   },
   { name: 'start', variants: ['start', 'staart', 'tart', 'estart', 'istart', 'estaan', 'estaat'] },
   { name: 'go to', variants: ['go to', 'goto', 'go two', 'go-to', 'gotu', 'gato'] }

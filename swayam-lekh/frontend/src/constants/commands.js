@@ -51,7 +51,7 @@ export const COMMANDS = [
     category: "COMMAND_MODE",
   },
   {
-    command: "LIST THE COMMANDS",
+    command: "LIST COMMANDS",
     audioFile: null,
     description: "Opens the full voice command guide on screen.",
     category: "COMMAND_MODE",
