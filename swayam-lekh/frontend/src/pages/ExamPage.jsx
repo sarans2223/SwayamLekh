@@ -21,6 +21,8 @@ import ExamLoadingScreen from '../components/exam/ExamLoadingScreen';
 import { startVoiceMonitoring, stopVoiceMonitoring, setMonitorStream } from '../utils/voiceMonitor';
 import { playSarvamTTS } from '../utils/sarvamTTS';
 import { useQuestionAudioCache } from '../hooks/useQuestionAudioCache';
+import Modal from '../components/ui/Modal';
+import { COMMANDS } from '../constants/commands';
 import { detectVoiceCommand } from '../utils/voiceCommandMatcher';
 import { extractQuestionParts, normalizePartAnswers, getPartAnswer, setPartAnswer } from '../utils/questionParts';
 import { MATHS_SAMPLE_QUESTIONS } from '../data/mathsSampleQuestions';
@@ -67,6 +69,7 @@ export default function ExamPage() {
   const [micStatus, setMicStatus] = useState('idle'); // idle | requesting | active | error
   const [micError, setMicError] = useState(null);
   const [micReady, setMicReady] = useState(false); // true once exam mic stream is open
+  const [showCommandList, setShowCommandList] = useState(false);
   const [activeSectionId, setActiveSectionId] = useState('all');
   const [spellMode, setSpellMode] = useState(false);
   const [examStarted, setExamStarted] = useState(false);
@@ -749,6 +752,14 @@ export default function ExamPage() {
 
       const matched = detectVoiceCommand(normalized);
       if (matched) {
+        if (matched === 'list commands') {
+          optionCaptured = true;
+          stopRecognition();
+          setShowCommandList(true);
+          noteCommand('Command list opened');
+          return true;
+        }
+
         if (matched === 'stop' || matched === 'help') {
           triggerAlarm();
           noteCommand('Help requested');
@@ -1329,6 +1340,11 @@ export default function ExamPage() {
       recordOneChunk();
     };
 
+    const closeCommandList = () => {
+      setShowCommandList(false);
+      startRecognition();
+    };
+
     const beginQuestionFlow = () => {
       if (sameQuestionRerun) {
         console.log('[ExamVoice] Starting recognition (rerun same question)');
@@ -1515,6 +1531,20 @@ export default function ExamPage() {
           onClose={dismissAlarm}
         />
       )}
+
+      <Modal isOpen={showCommandList} onClose={closeCommandList} title="Voice Command Guide" size="lg">
+        <div style={{ display: 'grid', gap: 14 }}>
+          {COMMANDS.map((cmd) => (
+            <div key={cmd.command} style={{ padding: 16, borderRadius: 12, backgroundColor: 'var(--surface2)', border: '1px solid var(--border)' }}>
+              <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--accent)', marginBottom: 8 }}>{cmd.command}</div>
+              <div style={{ color: 'var(--ink2)', lineHeight: 1.5 }}>{cmd.description}</div>
+            </div>
+          ))}
+          <div style={{ marginTop: 6, fontSize: 14, color: 'var(--ink3)' }}>
+            Say "list the commands" to open this guide anytime while in the exam.
+          </div>
+        </div>
+      </Modal>
 
       {state.showSecurityModal && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 9000, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

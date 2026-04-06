@@ -37,6 +37,10 @@ const COMMAND_VARIANTS = [
     name: 'help',
     variants: ['help', 'elp', 'halp', 'help help help', 'help help', 'helphelp', 'halp halp', 'elp elp']
   },
+  {
+    name: 'list commands',
+    variants: ['list the commands', 'list commands', 'show commands', 'show the commands', 'command list', 'commands list']
+  },
   { name: 'start', variants: ['start', 'staart', 'tart', 'estart', 'istart', 'estaan', 'estaat'] },
   { name: 'go to', variants: ['go to', 'goto', 'go two', 'go-to', 'gotu', 'gato'] }
 ];
