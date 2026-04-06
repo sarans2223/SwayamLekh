@@ -48,7 +48,7 @@ export function compareFeatures(stored, live) {
     spectral_centroid: 0.05,
   };
 
-  const THRESHOLD = 65;
+  const THRESHOLD = 55;  // Lowered from 65 for better sensitivity to softer voices
 
   // Safe scalar distance, clamped 0→1 (0 = identical)
   const scalarDist = (a, b, scale) => {
