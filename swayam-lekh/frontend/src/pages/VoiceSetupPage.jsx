@@ -242,6 +242,12 @@ export default function VoiceSetupPage() {
     sr.lang = srLang;
     sr.continuous = true;
     sr.interimResults = true;
+    sr.maxAlternatives = 1;  // Focus on best match
+    
+    // Improve sensitivity to softer voices in Chromium browsers
+    if (sr.abortOnError !== undefined) {
+      sr.abortOnError = true;
+    }
     
     console.log('[SR] initialized with lang:', srLang);
 
@@ -330,9 +336,15 @@ export default function VoiceSetupPage() {
         console.log('[mic] AudioContext resumed');
       }
       const source   = ctx.createMediaStreamSource(stream);
+      
+      // Add GainNode to amplify microphone input for better voice capture
+      const gain = ctx.createGain();
+      gain.gain.value = 2.0;  // Amplify input by 2x for better sensitivity
+      
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 128;  // must be power of 2
-      source.connect(analyser);
+      source.connect(gain);
+      gain.connect(analyser);
       analyserRef.current = analyser;
       drawBars();
 
