@@ -51,6 +51,12 @@ export const COMMANDS = [
     category: "COMMAND_MODE",
   },
   {
+    command: "LIST COMMANDS",
+    audioFile: null,
+    description: "Opens the full voice command guide on screen.",
+    category: "COMMAND_MODE",
+  },
+  {
     command: "CORRECT [WRONG] TO [RIGHT]",
     audioFile: null,
     description: "Replace first occurrence of a word in your answer. E.g. 'correct newton to neutron'.",

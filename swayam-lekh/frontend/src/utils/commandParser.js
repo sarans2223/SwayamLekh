@@ -18,6 +18,7 @@ export function parseCommand(transcript) {
   if (upper.includes("SKIP")) return { type: "SKIP", payload: null };
   if (upper.includes("REPEAT QUESTION")) return { type: "REPEAT_QUESTION", payload: null };
   if (upper.includes("REPEAT ANSWER")) return { type: "REPEAT_ANSWER", payload: null };
+  if (upper.includes("LIST THE COMMANDS") || upper.includes("SHOW THE COMMANDS") || upper.includes("LIST COMMANDS")) return { type: "LIST_COMMANDS", payload: null };
   if (upper.includes("HELP HELP HELP")) return { type: "HELP", payload: null };
   if (upper.includes("FINISH BY")) {
     const rollNo = upper.replace("FINISH BY", "").trim();

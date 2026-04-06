@@ -26,7 +26,8 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' })
   const sizes = {
     sm: '400px',
     md: '600px',
-    lg: '800px'
+    lg: '800px',
+    xl: '900px'
   };
 
   const modalStyle = {
