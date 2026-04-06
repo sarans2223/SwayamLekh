@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sarvam Realtime Speech-to-Text</title>
+  <style>
+    body { margin: 0; font-family: Inter, system-ui, sans-serif; background: #f7fafc; color: #111827; }
+    .page { max-width: 1000px; margin: 32px auto; padding: 16px; }
+    .card { background: white; border-radius: 20px; box-shadow: 0 24px 80px rgba(15, 23, 42, 0.08); padding: 24px; }
+    h1 { margin-bottom: 12px; font-size: 2rem; }
+    .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 18px; }
+    button { border: none; background: #2563eb; color: white; padding: 12px 18px; border-radius: 999px; cursor: pointer; transition: background .2s ease; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    select { padding: 10px 14px; border-radius: 12px; border: 1px solid #cbd5e1; }
+    .status-grid { display: grid; grid-template-columns: repeat(2, minmax(160px, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .status-card { background: #eff6ff; padding: 14px 18px; border-radius: 16px; }
+    .status-card strong { display: block; margin-bottom: 6px; font-size: 0.92rem; }
+    #waveform { width: 100%; max-height: 180px; border-radius: 16px; background: #0f172a; display: block; }
+    #transcript { margin-top: 18px; min-height: 160px; white-space: pre-wrap; line-height: 1.6; font-size: 1rem; border-radius: 16px; padding: 18px; background: #f8fafc; border: 1px solid #e2e8f0; }
+    .hint { color: #475569; font-size: 0.95rem; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="card">
+      <h1>Sarvam Realtime Speech-to-Text</h1>
+      <p class="hint">Uses microphone audio capture, VAD, WAV encoding, Sarvam STT proxy, and Whisper fallback.</p>
+
+      <div class="controls">
+        <button id="startBtn">Start Listening</button>
+        <button id="stopBtn" disabled>Stop</button>
+        <label>
+          Language:
+          <select id="langSelect">
+            <option value="en-IN">English (India)</option>
+            <option value="ta-IN">Tamil (India)</option>
+            <option value="hi-IN">Hindi (India)</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="status-grid">
+        <div class="status-card"><strong>Status</strong><span id="statusText">Idle</span></div>
+        <div class="status-card"><strong>Speech state</strong><span id="speechState">Waiting</span></div>
+        <div class="status-card"><strong>Confidence</strong><span id="confidenceText">—</span></div>
+        <div class="status-card"><strong>Noise / volume</strong><span id="attentionText">—</span></div>
+      </div>
+
+      <canvas id="waveform" width="960" height="180"></canvas>
+      <div id="meterText" class="hint">Waveform shows live microphone input.</div>
+
+      <div id="transcript">Live transcription will appear here.</div>
+    </div>
+  </div>
+  <script type="module" src="./sarvam-realtime.js"></script>
+</body>
+</html>
