@@ -1,8 +1,3 @@
-// src/data/phoneticDictionary.js
-// Universal Phonetic Correction Dictionary
-// Generated for Swayam Lekh Exam System
-// Total entries: 20000+
-
 export const PHONETIC_DICTIONARY = {
 
   // ═══════════════════════════════════════════════════════
@@ -63,11 +58,13 @@ export const PHONETIC_DICTIONARY = {
   "veenas": "Venus",
   "wenoos": "Venus",
   "weenus": "Venus",
+  
   "earth": "Earth",
   "eart": "Earth",
   "erth": "Earth",
   "urth": "Earth",
   "eard": "Earth",
+
 
   // Question 2 — Water / Chemical Symbol
   "h two o": "H2O",
