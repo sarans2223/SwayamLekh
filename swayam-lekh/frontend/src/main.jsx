@@ -6,6 +6,7 @@ import App from './App.jsx';
 import './styles/variables.css';
 import './styles/globals.css';
 import './styles/animations.css';
+import 'katex/dist/katex.min.css';
 
 console.log("Main entry point loaded.");
 

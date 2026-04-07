@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Speech-to-Text Pipeline</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .section-title {
+            color: #667eea;
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 14px;
+        }
+
+        .btn-start {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+        }
+
+        .btn-start:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-stop {
+            background: linear-gradient(135deg, #f093fb, #f5576c);
+            color: white;
+        }
+
+        .btn-stop:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(245, 87, 108, 0.4);
+        }
+
+        .btn-clear {
+            background: #95a5a6;
+            color: white;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        canvas {
+            width: 100%;
+            height: 150px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border: 1px solid #ddd;
+        }
+
+        .status {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .status-idle {
+            background: #ecf0f1;
+            color: #7f8c8d;
+        }
+
+        .status-active {
+            background: #d5f4e6;
+            color: #27ae60;
+        }
+
+        .status-error {
+            background: #fadbd8;
+            color: #c0392b;
+        }
+
+        .transcript-box {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            min-height: 100px;
+        }
+
+        .transcript-label {
+            color: #667eea;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .transcript-text {
+            color: #333;
+            line-height: 1.6;
+            word-break: break-word;
+        }
+
+        .interim {
+            color: #95a5a6;
+            font-style: italic;
+        }
+
+        .metadata {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .meta-item {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 6px;
+            border-left: 3px solid #667eea;
+        }
+
+        .meta-label {
+            color: #7f8c8d;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .meta-value {
+            color: #333;
+            font-size: 16px;
+            margin-top: 5px;
+        }
+
+        .error-message {
+            background: #fadbd8;
+            color: #c0392b;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            border-left: 4px solid #e74c3c;
+        }
+
+        .info-box {
+            background: #d5eef7;
+            color: #1a5276;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 4px solid #3498db;
+            margin-bottom: 20px;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+
+        .feature-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #ddd;
+        }
+
+        .feature-card h4 {
+            color: #667eea;
+            margin-bottom: 8px;
+        }
+
+        .feature-card p {
+            color: #666;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #ecf0f1;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.2s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Real-time Speech-to-Text Pipeline</h1>
+        <p class="subtitle">Powered by Groq Whisper API with Advanced Audio Processing</p>
+
+        <div class="info-box">
+            ℹ️ This demo captures audio from your microphone, processes it with Web Audio API (16kHz mono, WAV format),
+            detects voice activity, and sends it to Groq Whisper for transcription. Supports Tamil & English.
+        </div>
+
+        <!-- Controls -->
+        <div class="section">
+            <div class="section-title">🎙️ Recording Controls</div>
+            <div class="controls">
+                <button class="btn-start" id="startBtn" onclick="startRecording()">Start Recording</button>
+                <button class="btn-stop" id="stopBtn" onclick="stopRecording()" disabled>Stop Recording</button>
+                <button class="btn-clear" id="clearBtn" onclick="clearTranscript()">Clear</button>
+            </div>
+            <div class="status">
+                <span class="badge status-idle" id="statusBadge">IDLE</span>
+                <span class="badge" id="vadBadge" style="display:none; background: #d5f4e6; color: #27ae60;">🎙️ SPEAKING</span>
+                <span class="badge status-error" id="errorBadge" style="display:none;">⚠️ ERROR</span>
+            </div>
+        </div>
+
+        <!-- Waveform Visualization -->
+        <div class="section">
+            <div class="section-title">📊 Live Waveform</div>
+            <canvas id="waveform"></canvas>
+            <div style="margin-top: 10px; color: #666; font-size: 12px;">
+                Real-time frequency spectrum of microphone input
+            </div>
+        </div>
+
+        <!-- Audio Metrics -->
+        <div class="section">
+            <div class="section-title">📈 Audio Metrics</div>
+            <div class="feature-grid">
+                <div class="meta-item">
+                    <div class="meta-label">Volume Level</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="volumeBar" style="width: 0%;"></div>
+                    </div>
+                    <div class="meta-value" id="volumeValue">0%</div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">Noise Level</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="noiseBar" style="width: 0%; background: linear-gradient(90deg, #f39c12, #e67e22);"></div>
+                    </div>
+                    <div class="meta-value" id="noiseValue">0%</div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">Confidence Score</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="confidenceBar" style="width: 0%; background: linear-gradient(90deg, #2ecc71, #27ae60);"></div>
+                    </div>
+                    <div class="meta-value" id="confidenceValue">0%</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Transcript Display -->
+        <div class="section">
+            <div class="section-title">📝 Transcription</div>
+            <div id="errorMessage" class="error-message" style="display:none;"></div>
+            <div class="transcript-box">
+                <div class="transcript-label">Final Transcript:</div>
+                <div class="transcript-text" id="finalTranscript">(waiting for speech...)</div>
+            </div>
+            <div class="transcript-box" id="interimBox" style="display:none;">
+                <div class="transcript-label">Interim (Real-time):</div>
+                <div class="transcript-text interim" id="interimTranscript"></div>
+            </div>
+        </div>
+
+        <!-- Metadata -->
+        <div class="section">
+            <div class="section-title">ℹ️ Metadata</div>
+            <div class="metadata">
+                <div class="meta-item">
+                    <div class="meta-label">Status</div>
+                    <div class="meta-value" id="statusValue">Ready</div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">Voice Activity Detection</div>
+                    <div class="meta-value" id="vadValue">OFF</div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">Language Detected</div>
+                    <div class="meta-value" id="langValue">--</div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">Processing Time</div>
+                    <div class="meta-value" id="timeValue">--</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Features -->
+        <div class="section">
+            <div class="section-title">✨ Features</div>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h4>🎧 Advanced Audio Capture</h4>
+                    <p>Echo cancellation, noise suppression, and auto-gain control using hardware constraints</p>
+                </div>
+                <div class="feature-card">
+                    <h4>🔊 Audio Processing</h4>
+                    <p>Converts to mono, resamples to 16kHz, normalizes volume, and encodes to WAV format</p>
+                </div>
+                <div class="feature-card">
+                    <h4>🗣️ Voice Activity Detection</h4>
+                    <p>Detects speech patterns and only sends audio chunks containing actual speech</p>
+                </div>
+                <div class="feature-card">
+                    <h4>⚡ Real-time Transcription</h4>
+                    <p>Low-latency processing with Groq Whisper API for near-instant results</p>
+                </div>
+                <div class="feature-card">
+                    <h4>📊 Live Visualization</h4>
+                    <p>Real-time waveform and frequency spectrum display of audio input</p>
+                </div>
+                <div class="feature-card">
+                    <h4>🌐 Multilingual Support</h4>
+                    <p>Supports Tamil, English, and mixed-language audio with automatic detection</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="./realtimeSTT.js"></script>
+    <script>
+        let sttManager = null;
+        let startTime = null;
+
+        /**
+         * Initialize STT Manager
+         */
+        async function initializeSTT() {
+            try {
+                const { RealtimeSTTManager } = window;
+                
+                sttManager = new RealtimeSTTManager({
+                    language: 'ta',
+                    onTranscript: (text, confidence) => {
+                        document.getElementById('finalTranscript').textContent = text || '(no speech detected)';
+                        document.getElementById('confidenceBar').style.width = (confidence * 100) + '%';
+                        document.getElementById('confidenceValue').textContent = Math.round(confidence * 100) + '%';
+                    },
+                    onInterim: (text) => {
+                        if (text) {
+                            document.getElementById('interimBox').style.display = 'block';
+                            document.getElementById('interimTranscript').textContent = text;
+                        }
+                    },
+                    onVolumeChange: (vol) => {
+                        document.getElementById('volumeBar').style.width = (vol * 100) + '%';
+                        document.getElementById('volumeValue').textContent = Math.round(vol * 100) + '%';
+                    },
+                    onNoiseChange: (noise) => {
+                        document.getElementById('noiseBar').style.width = (noise * 100) + '%';
+                        document.getElementById('noiseValue').textContent = Math.round(noise * 100) + '%';
+                    },
+                    onVADChange: (isActive) => {
+                        const badge = document.getElementById('vadBadge');
+                        const value = document.getElementById('vadValue');
+                        if (isActive) {
+                            badge.style.display = 'inline-block';
+                            value.textContent = 'ON';
+                        } else {
+                            badge.style.display = 'none';
+                            value.textContent = 'OFF';
+                        }
+                    },
+                    onError: (err) => {
+                        document.getElementById('errorMessage').textContent = '⚠️ ' + err.message;
+                        document.getElementById('errorMessage').style.display = 'block';
+                        document.getElementById('errorBadge').style.display = 'inline-block';
+                    },
+                    onStatusChange: (status) => {
+                        const badge = document.getElementById('statusBadge');
+                        const value = document.getElementById('statusValue');
+                        badge.textContent = status.toUpperCase();
+                        value.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+                        
+                        if (status === 'active') {
+                            badge.className = 'badge status-active';
+                        } else if (status === 'error') {
+                            badge.className = 'badge status-error';
+                        } else {
+                            badge.className = 'badge status-idle';
+                        }
+                    }
+                });
+            } catch (err) {
+                console.error('Failed to initialize STT:', err);
+            }
+        }
+
+        /**
+         * Start recording
+         */
+        async function startRecording() {
+            if (!sttManager) await initializeSTT();
+            
+            try {
+                document.getElementById('errorMessage').style.display = 'none';
+                document.getElementById('errorBadge').style.display = 'none';
+                await sttManager.start();
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                startTime = Date.now();
+                animateWaveform();
+            } catch (err) {
+                document.getElementById('errorMessage').textContent = '⚠️ ' + err.message;
+                document.getElementById('errorMessage').style.display = 'block';
+            }
+        }
+
+        /**
+         * Stop recording
+         */
+        async function stopRecording() {
+            if (sttManager) {
+                await sttManager.stop();
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+                const duration = startTime ? Date.now() - startTime : 0;
+                document.getElementById('timeValue').textContent = (duration / 1000).toFixed(1) + 's';
+            }
+        }
+
+        /**
+         * Clear transcript
+         */
+        function clearTranscript() {
+            document.getElementById('finalTranscript').textContent = '(waiting for speech...)';
+            document.getElementById('interimTranscript').textContent = '';
+            document.getElementById('interimBox').style.display = 'none';
+            document.getElementById('errorMessage').style.display = 'none';
+        }
+
+        /**
+         * Animate waveform
+         */
+        function animateWaveform() {
+            const canvas = document.getElementById('waveform');
+            const ctx = canvas.getContext('2d');
+
+            const draw = () => {
+                if (!sttManager || !sttManager.isListening) return;
+
+                const analyzer = sttManager.getAnalyzer();
+                if (!analyzer) {
+                    requestAnimationFrame(draw);
+                    return;
+                }
+
+                const dataArray = new Uint8Array(analyzer.frequencyBinCount);
+                analyzer.getByteFrequencyData(dataArray);
+
+                ctx.fillStyle = '#f8f9fa';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#667eea';
+                const barWidth = (canvas.width / dataArray.length) * 2.5;
+                let x = 0;
+
+                for (let i = 0; i < dataArray.length; i += 2) {
+                    const barHeight = (dataArray[i] / 255) * canvas.height;
+                    ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+                    x += barWidth + 1;
+                }
+
+                requestAnimationFrame(draw);
+            };
+
+            draw();
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', initializeSTT);
+    </script>
+</body>
+</html>
