@@ -26,6 +26,7 @@ const COMMAND_HINTS = {
   flag: ['flag', 'flab', 'fleg', 'plag', 'flug', 'plug'],
   help: ['help', 'elp', 'halp', 'help help help', 'help help', 'helphelp', 'halp halp', 'elp elp'],
   'list commands': ['list commands', 'list the commands', 'show commands', 'show the commands', 'command list', 'commands list'],
+  'skip skip': ['skip skip', 'skipskip'],
   start: ['start', 'staart', 'tart', 'estart', 'istart', 'estaan', 'estaat'],
   'go to': ['go to', 'goto', 'go two', 'go-to', 'gotu', 'gato'],
 };
