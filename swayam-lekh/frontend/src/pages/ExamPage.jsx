@@ -28,6 +28,8 @@ import { extractQuestionParts, normalizePartAnswers, getPartAnswer, setPartAnswe
 import { MATHS_SAMPLE_QUESTIONS } from '../data/mathsSampleQuestions';
 import { buildQuestionVoiceText } from '../utils/questionSpeech';
 import { isTTSPlaying } from '../utils/audioState.js';
+import { convertMath } from '../utils/mathConverter';
+import MathRenderer from '../components/exam/MathRenderer';
 
 const MARK_SECTION_ORDER = [1, 2, 3, 5];
 const OPTION_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
@@ -66,6 +68,7 @@ export default function ExamPage() {
   const pendingQuestionNumberRef = useRef(false);
   const dictationBufferRef = useRef([]);
   const dictationSilenceTimerRef = useRef(null);
+  const lastTranscriptTimestampRef = useRef(0);
   const lastReadQuestionRef = useRef(null);
   const commandListAudioRef = useRef(null);
   const [micStatus, setMicStatus] = useState('idle'); // idle | requesting | active | error
@@ -75,6 +78,8 @@ export default function ExamPage() {
   const [activeSectionId, setActiveSectionId] = useState('all');
   const [spellMode, setSpellMode] = useState(false);
   const [examStarted, setExamStarted] = useState(false);
+  const [showMathModal, setShowMathModal] = useState(false);
+  const [currentMathLatex, setCurrentMathLatex] = useState('');
 
   const closeCommandList = useCallback(() => {
     setShowCommandList(false);
@@ -625,25 +630,53 @@ export default function ExamPage() {
 
     const appendDictation = (text = '', forcedPartKey = null) => {
       if (!text) return;
-      const normalized = formatDictationText(text, capitalizeNextTextRef.current);
-      capitalizeNextTextRef.current = false;
-      if (!normalized.trim() && !/\n/.test(normalized)) return;
-      if (questionParts.length) {
-        const targetPartKey = forcedPartKey || resolveActivePartKey();
-        if (!targetPartKey) return;
-        const base = getPartAnswer(currentAnswerRef.current, targetPartKey, questionParts);
-        const needsSpace = base && !normalized.startsWith('\n');
-        const merged = needsSpace ? `${base} ${normalized}` : `${base}${normalized}`;
-        writeCurrentAnswer(merged, targetPartKey);
-        noteCommand(`Captured answer for Part ${targetPartKey}`);
-        return;
+
+      // Support raw insertion when caller prefixes the text with ::RAW::
+      let isRaw = false;
+      let payload = text;
+      if (payload.startsWith('::RAW::')) {
+        isRaw = true;
+        payload = payload.replace(/^::RAW::/, '');
       }
 
-      const base = currentAnswerRef.current || '';
-      const needsSpace = base && !normalized.startsWith('\n');
-      const merged = needsSpace ? `${base} ${normalized}` : `${base}${normalized}`;
-      writeCurrentAnswer(merged);
-      noteCommand('Captured answer from speech');
+      let normalized = isRaw ? payload : formatDictationText(payload, capitalizeNextTextRef.current);
+      capitalizeNextTextRef.current = false;
+      if (!normalized.trim() && !/\n/.test(normalized)) return;
+
+      const innerAppend = async () => {
+        let finalText = normalized;
+
+        // Apply math conversion in maths mode when in ANSWER mode
+        const isMathsMode = student?.subjectMode === 'maths';
+        if (isMathsMode && mode === 'ANSWER') {
+          try {
+            finalText = await convertMath(normalized);
+            console.log(`MathConverter applied: "${normalized}" → "${finalText}"`);
+          } catch (err) {
+            console.error('Math conversion error:', err);
+            // Continue with original normalized text if conversion fails
+          }
+        }
+
+        if (questionParts.length) {
+          const targetPartKey = forcedPartKey || resolveActivePartKey();
+          if (!targetPartKey) return;
+          const base = getPartAnswer(currentAnswerRef.current, targetPartKey, questionParts);
+          const needsSpace = base && !finalText.startsWith('\n');
+          const merged = needsSpace ? `${base} ${finalText}` : `${base}${finalText}`;
+          writeCurrentAnswer(merged, targetPartKey);
+          noteCommand(`Captured answer for Part ${targetPartKey}`);
+          return;
+        }
+
+        const base = currentAnswerRef.current || '';
+        const needsSpace = base && !finalText.startsWith('\n');
+        const merged = needsSpace ? `${base} ${finalText}` : `${base}${finalText}`;
+        writeCurrentAnswer(merged);
+        noteCommand('Captured answer from speech');
+      };
+
+      void innerAppend();
     };
 
     const resumeRecognitionIfNeeded = () => {
@@ -864,6 +897,11 @@ export default function ExamPage() {
         }
 
         if (matched === 'read back') {
+          // In maths mode, temporarily hold readback to avoid speaking math content
+          if (student?.subjectMode === 'maths') {
+            noteCommand('Readback held for maths mode');
+            return true;
+          }
           speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, currentAnswerRef.current));
           noteCommand('Repeating answer');
           return true;
@@ -953,6 +991,76 @@ export default function ExamPage() {
 
         if (matched === 'start') {
           noteCommand('Start command heard');
+          return true;
+        }
+
+        // ── MATH MODE COMMANDS ──
+        if (matched === 'show math' || /show\s+(?:math|equation)/.test(normalized)) {
+          const isMathsMode = student?.subjectMode === 'maths';
+          if (!isMathsMode) {
+            noteCommand('Math display only available in maths mode');
+            return true;
+          }
+          
+          const currentAnswer = currentAnswerRef.current || '';
+          if (!currentAnswer.trim()) {
+            noteCommand('No equation to display');
+            return true;
+          }
+
+          // Convert current answer to LaTeX if not already done
+          const convertAndDisplay = async () => {
+            try {
+              const latex = await convertMath(currentAnswer);
+              setCurrentMathLatex(latex);
+              setShowMathModal(true);
+              noteCommand('Showing math equation');
+            } catch (err) {
+              console.error('Error converting math for display:', err);
+              noteCommand('Could not convert equation');
+            }
+          };
+
+          void convertAndDisplay();
+          return true;
+        }
+
+        if (matched === 'clear math' || /clear\s+(?:math|equation)/.test(normalized)) {
+          const isMathsMode = student?.subjectMode === 'maths';
+          if (!isMathsMode) {
+            noteCommand('Math clear only available in maths mode');
+            return true;
+          }
+          
+          setCurrentMathLatex('');
+          setShowMathModal(false);
+          noteCommand('Cleared math display');
+          return true;
+        }
+
+        if (matched === 'read math' || /read\s+(?:math|equation)/.test(normalized)) {
+          const isMathsMode = student?.subjectMode === 'maths';
+          if (!isMathsMode) {
+            noteCommand('Math reading only available in maths mode');
+            return true;
+          }
+
+          if (!currentMathLatex) {
+            noteCommand('No equation to read');
+            return true;
+          }
+
+          const readMath = async () => {
+            try {
+              await playSarvamTTS(currentMathLatex, 'en-IN');
+              noteCommand('Reading math equation');
+            } catch (err) {
+              console.error('Error reading math:', err);
+              noteCommand('Could not read equation');
+            }
+          };
+
+          void readMath();
           return true;
         }
       }
@@ -1226,96 +1334,119 @@ export default function ExamPage() {
       return out.replace(/[ \t]+/g, ' ');
     };
 
-    const runCorrectionPipeline = async (text) => {
-      const mapped = applyPhoneticMap(text);
-      return mapped;
-    };
+   const runCorrectionPipeline = async (text) => {
+  const mapped = applyPhoneticMap(text);
+  return mapped;
+};const processTranscript = async (text) => {
+  const cleaned = (text || '').trim();
+  if (!cleaned) return;
 
-    const processTranscript = async (text) => {
-      const cleaned = (text || '').trim();
-      if (!cleaned) return;
-      const segments = cleaned.split(/[.,!?]/).map((s) => s.trim()).filter(Boolean);
-      let skipNextQuestionLikeChunk = false;
-      const isFiller = (phrase) => {
-        const low = phrase.toLowerCase();
-        // Drop common false positives from Whisper on silence.
-        if (low === 'thank you' || low === 'thankyou' || low === 'thanks' || low === '.') return true;
-        if (/^no+$/i.test(low)) return true;
-        if (low === 'wait' || low === 'sorry') return true;
-        if (/^(yes|yeah|yep|ok|okay|hmm|hmmm|right|fine|alright)$/i.test(low)) return true;
-        if (/^(so\s+)?the\s+question\s+is\b/i.test(low) || /^question\s+is\b/i.test(low)) {
-          skipNextQuestionLikeChunk = true;
-          return true;
-        }
-        if (skipNextQuestionLikeChunk && /^(what|why|how|when|where|which|who|is|are|can|could|do|does|did)\b/i.test(low)) {
-          skipNextQuestionLikeChunk = false;
-          return true;
-        }
-        skipNextQuestionLikeChunk = false;
-        return false;
-      };
-      for (const chunk of segments) {
-        if (chunk.length <= 1) continue;
-        if (isFiller(chunk)) continue;
+  const segments = cleaned.split(/[.,!?]/).map((s) => s.trim()).filter(Boolean);
+  let skipNextQuestionLikeChunk = false;
+  const isFiller = (phrase) => {
+    const low = phrase.toLowerCase();
+    // Drop common false positives from Whisper on silence.
+    if (low === 'thank you' || low === 'thankyou' || low === 'thanks' || low === '.') return true;
+    if (/^no+$/i.test(low)) return true;
+    if (low === 'wait' || low === 'sorry') return true;
+    if (/^(yes|yeah|yep|ok|okay|hmm|hmmm|right|fine|alright)$/i.test(low)) return true;
+    if (/^(so\s+)?the\s+question\s+is\b/i.test(low) || /^question\s+is\b/i.test(low)) {
+      skipNextQuestionLikeChunk = true;
+      return true;
+    }
+    if (skipNextQuestionLikeChunk && /^(what|why|how|when|where|which|who|is|are|can|could|do|does|did)\b/i.test(low)) {
+      skipNextQuestionLikeChunk = false;
+      return true;
+    }
+    skipNextQuestionLikeChunk = false;
+    return false;
+  };
+  for (const chunk of segments) {
+    if (chunk.length <= 1) continue;
+    if (isFiller(chunk)) continue;
 
-        const lowerChunk = chunk.trim().toLowerCase();
+    const now = Date.now();
+    const gap = now - (lastTranscriptTimestampRef.current || 0);
+    lastTranscriptTimestampRef.current = now;
 
-        const letterTokens = lowerChunk.split(/\s+/).filter(Boolean);
-        const isLetterByLetterNoise = !spellMode
-          && letterTokens.length >= 5
-          && letterTokens.every((token) => token.length === 1 && /[a-z]/i.test(token));
-        if (isLetterByLetterNoise) {
-          continue;
-        }
+    // Prepare a processed chunk where certain spoken math phrases are converted
+    // Examples: "d of x" -> "dx", "is equal to" -> " = "
+    let processedChunk = chunk;
+    // d of x / d x -> dx (single-letter variable)
+    processedChunk = processedChunk.replace(/\bd(?:\s+of)?\s+([a-z])\b/gi, (m, v) => `d${v}`);
+    // map equality phrases to =
+    processedChunk = processedChunk.replace(/\b(is equal to|is equal|equal to)\b/gi, ' = ');
 
-        // Always attempt command handling first to avoid dumping commands into answer text
-        const handled = handleCommandChunk(chunk);
-        if (handled) continue;
+    const lowerProcessed = processedChunk.trim().toLowerCase();
 
-        const isMcqQuestion = Array.isArray(currentQuestion?.options) && currentQuestion.options.length;
-        if (isMcqQuestion) {
-          const letter = detectSpokenOption(chunk);
-          if (letter) {
-            handleSpokenOption(letter);
-            break;
-          }
-        }
+    // MATHS MODE: If 'solution' or common variants are heard, insert SOLUTION :
+    const isMathsMode = student?.subjectMode === 'maths';
+    if (isMathsMode && /\b(solutions?|soltuons|solushun|solushan|solushion|solushen|solushon|solushin|colution|solushyan|solushyen)\b/i.test(lowerProcessed)) {
+      // Insert uppercase SOLUTION line, leave 2 blank lines, then a single tab indentation
+      // Use ::RAW:: prefix so formatting isn't lowercased or altered
+      appendDictation('::RAW::\nSOLUTION :\n\n\n\t');
+      continue;
+    }
 
-        if (!isMcqQuestion) {
-          const navCommands = new Set([
-            'repeat', 'skip', 'submit', 'help', 'stop', 'clear', 'delete', 'correct', 'spell', 'previous', 'finish',
-            'skip to', 'skip to question', 'next slide', 'previous slide'
-          ]);
+    const letterTokens = lowerProcessed.split(/\s+/).filter(Boolean);
+    const allowLetterNoise = gap > 1000; // only treat letter-by-letter as noise if there was a 1s pause
+    const isLetterByLetterNoise = !spellMode
+      && allowLetterNoise
+      && letterTokens.length >= 5
+      && letterTokens.every((token) => token.length === 1 && /[a-z]/i.test(token));
+    if (isLetterByLetterNoise) {
+      continue;
+    }
 
-          const formattingCommands = new Set([
-            'comma', 'come on', 'come ah', 'come ma',
-            'colon', 'semi-colon', 'semicolon', 'new line', 'new paragraph', 'dot', 'period',
-            'open bracket', 'close bracket', 'open parenthesis', 'close parenthesis'
-          ]);
+    // Always attempt command handling first to avoid dumping commands into answer text
+    // Use the processed chunk so mapped phrases (e.g. "is equal to" → "=") don't trigger noisy no-match logs
+    const handled = handleCommandChunk(processedChunk);
+    if (handled) continue;
 
-          // Full-phrase checks only (no partials like "new")
-          if (navCommands.has(lowerChunk)) {
-            continue;
-          }
-
-          if (lowerChunk === 'new line' || lowerChunk === 'new paragraph' || lowerChunk === 'next line' || lowerChunk === 'next paragraph') {
-            const isDoubleLine = lowerChunk === 'new paragraph' || lowerChunk === 'next paragraph';
-            const separator = isDoubleLine ? '\n\n' : '\n';
-            capitalizeNextTextRef.current = true;
-            appendDictation(separator);
-            continue;
-          }
-
-          if (formattingCommands.has(lowerChunk)) {
-            const punctuated = normalizePunctuation(chunk);
-            appendDictation(punctuated);
-            continue;
-          }
-
-          await enqueueDictationWords(chunk);
-        }
+    const isMcqQuestion = Array.isArray(currentQuestion?.options) && currentQuestion.options.length;
+    if (isMcqQuestion) {
+      const letter = detectSpokenOption(chunk);
+      if (letter) {
+        handleSpokenOption(letter);
+        break;
       }
-    };
+    }
+
+    if (!isMcqQuestion) {
+      const navCommands = new Set([
+        'repeat', 'skip', 'submit', 'help', 'stop', 'clear', 'delete', 'correct', 'spell', 'previous', 'finish',
+        'skip to', 'skip to question', 'next slide', 'previous slide'
+      ]);
+
+      const formattingCommands = new Set([
+        'comma', 'come on', 'come ah', 'come ma',
+        'colon', 'semi-colon', 'semicolon', 'new line', 'new paragraph', 'dot', 'period',
+        'open bracket', 'close bracket', 'open parenthesis', 'close parenthesis'
+      ]);
+
+      // Full-phrase checks only (no partials like "new")
+      if (navCommands.has(lowerProcessed)) {
+        continue;
+      }
+
+      if (lowerProcessed === 'new line' || lowerProcessed === 'new paragraph' || lowerProcessed === 'next line' || lowerProcessed === 'next paragraph') {
+        const isDoubleLine = lowerProcessed === 'new paragraph' || lowerProcessed === 'next paragraph';
+        const separator = isDoubleLine ? '\n\n' : '\n';
+        capitalizeNextTextRef.current = true;
+        appendDictation(separator);
+        continue;
+      }
+
+      if (formattingCommands.has(lowerProcessed)) {
+        const punctuated = normalizePunctuation(processedChunk);
+        appendDictation(punctuated);
+        continue;
+      }
+
+      await enqueueDictationWords(processedChunk);
+    }
+  }
+};
 
     const startRecognition = () => {
       if (!examMicRef.current) return;
@@ -1348,6 +1479,13 @@ export default function ExamPage() {
 
           // Force mimeType to plain audio/webm to satisfy Sarvam's allowed list
           const blob = new Blob(chunks, { type: 'audio/webm' });
+          if (blob.size < 1000) {
+            alert('Recording too short. Please speak for at least 1 second.');
+            if (!cancelled && !optionCaptured) {
+              recordOneChunk();
+            }
+            return;
+          }
           try {
             const transcript = await sarvamTranscribe(blob, langCode);
             if (transcript) {
@@ -1509,25 +1647,15 @@ export default function ExamPage() {
             onToggleFlag={() => toggleFlag(currentQuestion.id)}
           />
         </div>
-        <div style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden', maxWidth: '100%', boxSizing: 'border-box' }}>
-          <AnswerBox
-            answer={currentAnswer}
-            onAnswerChange={(partOrValue, maybeValue) => {
-              if (questionParts.length) {
-                const partKey = partOrValue;
-                const nextValue = maybeValue ?? '';
-                updateAnswer(currentQuestion.id, setPartAnswer(currentAnswerRef.current, partKey, nextValue, questionParts));
-                return;
-              }
-              updateAnswer(currentQuestion.id, partOrValue);
-            }}
-            isActive={mode === 'ANSWER'}
-            subjectMode={student.subjectMode}
-            questionParts={questionParts}
-            activePartKey={activePartKey}
-            onActivePartChange={setActivePartKey}
-          />
-        </div>
+        <AnswerBox
+          answer={currentAnswer}
+          onAnswerChange={(partOrValue, maybeValue) => { /* existing code */ }}
+          isActive={mode === 'ANSWER'}
+          subjectMode={student.subjectMode}
+          questionParts={questionParts}
+          activePartKey={activePartKey}
+          onActivePartChange={setActivePartKey}
+        />
       </div>
 
       {/* ── Right sidebar: Question palette ── */}
@@ -1646,6 +1774,24 @@ export default function ExamPage() {
           onClose={() => setMalpractice(null)}
         />
       )}
+
+      {/* ── Math Renderer Modal (for Maths Mode) ── */}
+      <Modal
+        isOpen={showMathModal}
+        onClose={() => setShowMathModal(false)}
+        title="Equation Display"
+        size="lg"
+      >
+        <div style={{ padding: '16px' }}>
+          <MathRenderer
+            latex={currentMathLatex}
+            onClear={() => {
+              setCurrentMathLatex('');
+              setShowMathModal(false);
+            }}
+          />
+        </div>
+      </Modal>
     </div>
   );
 }

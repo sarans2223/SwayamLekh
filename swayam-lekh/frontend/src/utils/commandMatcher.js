@@ -89,7 +89,7 @@ export function isLikelyCommand(transcript) {
 export function matchCommand(transcript) {
   const normalized = normalize(transcript);
   if (!normalized) {
-    console.log('[CommandMatcher] no match (empty transcript)');
+    console.debug('[CommandMatcher] no match (empty transcript)');
     return null;
   }
 
@@ -130,6 +130,6 @@ export function matchCommand(transcript) {
     }
   }
 
-  console.log(`[CommandMatcher] no match for "${transcript}"`);
+  console.debug(`[CommandMatcher] no match for "${transcript}"`);
   return null;
 }
