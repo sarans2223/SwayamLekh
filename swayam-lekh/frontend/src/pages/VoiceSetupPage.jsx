@@ -1,8 +1,12 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useStudent } from '../context/StudentContext';
+import { useExam } from '../context/ExamContext';
 import { saveVoiceProfile } from '../services/supabaseClient';
 import { countApproxCommandOccurrences } from '../utils/voiceCommandDetection';
+import { detectVoiceCommand } from '../utils/voiceCommandMatcher';
+import { formatTimeToSpeech } from '../utils/formatters';
+import { playSarvamTTS } from '../utils/sarvamTTS';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const VISUALIZER_BARS = 32;
@@ -26,41 +30,12 @@ function extractDigits(text) {
   return digits;
 }
 
-// ─── Audio helper — resolves only when audio ENDS (or errors) ─────────────────
-function playAudioFull(src) {
-  return new Promise((resolve) => {
-    const a = new Audio(src);
-    a.onended = () => resolve({ ok: true });
-    a.onerror = () => resolve({ ok: false });
-    a.play().catch(() => resolve({ ok: false, blocked: true }));
-  });
-}
-
-// ─── Audio helper — resolves as soon as it STARTS (non-blocking) ──────────────
-function playAudioStart(src) {
-  return new Promise((resolve) => {
-    const a = new Audio(src);
-    let settled = false;
-    const done = (payload) => {
-      if (settled) return;
-      settled = true;
-      resolve({ ...payload, el: a });
-    };
-
-    a.onerror   = () => done({ ok: false, blocked: false });
-    a.onplaying = () => done({ ok: true, blocked: false });
-    a.play().catch(() => done({ ok: false, blocked: true }));
-
-    // If neither onplaying nor play rejection arrives quickly, treat as playback failure.
-    setTimeout(() => done({ ok: false, blocked: false }), 5000);
-  });
-}
-
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function VoiceSetupPage() {
   const navigate    = useNavigate();
   const location    = useLocation();
   const { student } = useStudent();
+  const { state }   = useExam();
 
   const lang          = location.state?.lang || student?.instructionLang || 'en';
   const subjectMode   = location.state?.subjectMode || student?.subjectMode || 'normal';
@@ -123,6 +98,28 @@ export default function VoiceSetupPage() {
   const taskDoneRef  = useRef([false, false, false]);
   const blockedAudio = useRef(null);
   const srStarted    = useRef(false);  // guard to prevent SR from being started before intro ends
+  const currentAudioRef = useRef(null);
+
+  // ─── Audio helper — resolves only when audio ENDS (or errors) ─────────────────
+  function playAudioFull(src) {
+    return new Promise((resolve) => {
+      const a = new Audio(src);
+      currentAudioRef.current = a;
+      a.onended = () => resolve({ ok: true });
+      a.onerror = () => resolve({ ok: false });
+      a.play().catch(() => resolve({ ok: false, blocked: true }));
+    });
+  }
+
+  // ─── Audio helper — resolves immediately after play() succeeds ──────────────
+  function playAudioStart(src) {
+    return new Promise((resolve) => {
+      const a = new Audio(src);
+      currentAudioRef.current = a;
+      a.onerror = () => resolve({ ok: false, blocked: false, el: a });
+      a.play().then(() => resolve({ ok: true, blocked: false, el: a })).catch(() => resolve({ ok: false, blocked: true, el: a }));
+    });
+  }
 
   // ── Cleanup on unmount ────────────────────────────────────────────────────
   useEffect(() => () => {
@@ -130,6 +127,10 @@ export default function VoiceSetupPage() {
     cancelAnimationFrame(rafRef.current);
     try { srRef.current?.stop(); } catch (_) {}
     streamRef.current?.getTracks().forEach((t) => t.stop());
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+    }
   }, []);
 
   // ── Visualiser (single muted colour — no colour gradient) ─────────────────
@@ -255,7 +256,34 @@ export default function VoiceSetupPage() {
       console.log('[SR] onstart - speech recognition started');
     };
 
-    sr.onresult = (e) => {
+    const getAssistantIntent = async (transcript, context = []) => {
+        try {
+            const resp = await fetch('http://localhost:5000/api/intent', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ transcript, context }),
+            });
+            if (!resp.ok) return '';
+            const data = await resp.json();
+            return data.response || '';
+        } catch (err) {
+            console.error('[intent] AI response failed:', err);
+            return '';
+        }
+    };
+
+    const speakStatus = async (text) => {
+        const langCode = lang === 'ta' ? 'ta-IN' : 'en-IN';
+        try {
+            const audio = await playSarvamTTS(text, langCode);
+            return audio;
+        } catch (e) {
+            console.error('Sarvam TTS failed', e);
+            return null;
+        }
+    };
+
+    sr.onresult = async (e) => {
       if (dead.current) return;
       const transcript = Array.from(e.results).map((r) => r[0].transcript).join(' ');
       const recentTranscript = transcript
@@ -266,6 +294,36 @@ export default function VoiceSetupPage() {
         .split(' ')
         .slice(-12)
         .join(' ');
+      
+      const matched = detectVoiceCommand(recentTranscript);
+      if (matched === 'time left') {
+          const intent = await getAssistantIntent(recentTranscript);
+          
+          if (intent.includes('[GET_TIME]')) {
+              const seconds = state.timeLeft;
+              const naturalSentence = await getAssistantIntent(`System message: ${seconds} seconds`);
+              
+              if (naturalSentence) {
+                  // Pause existing audio if any
+                  if (currentAudioRef.current && !currentAudioRef.current.paused) {
+                      currentAudioRef.current.pause();
+                  }
+                  
+                  const audio = await speakStatus(naturalSentence);
+                  if (audio) {
+                      audio.onended = () => {
+                          if (currentAudioRef.current && !dead.current) currentAudioRef.current.play().catch(() => {});
+                      };
+                  } else {
+                      if (currentAudioRef.current && !dead.current) currentAudioRef.current.play().catch(() => {});
+                  }
+              }
+          } else if (intent) {
+              await speakStatus(intent);
+          }
+          return;
+      }
+
       const isFinal = Array.from(e.results).map((r) => r.isFinal);
       console.log('[SR] onresult:', { transcript: recentTranscript, isFinal: isFinal[isFinal.length - 1], resultsCount: e.results.length });
       setLastTranscript(recentTranscript);

@@ -16,7 +16,10 @@ export default function AnswerBox({ answer = "", isActive, onAnswerChange, subje
 
   const hasLatexContent = (text) => {
     if (!text) return false;
-    const latexIndicators = /[\\^_⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]/;
+    // Trigger math rendering on LaTeX commands (\), powers (^), subscripts (_),
+    // or common mathematical operators that deserve KaTeX formatting.
+    // Note: We use \ as the primary indicator for complex symbols.
+    const latexIndicators = /[\\^_⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉=+\-×÷±<>]|\\int|\\sum|\\sqrt|\\ge|\\le|\\pm|\\neq/;
     return latexIndicators.test(text);
   };
 

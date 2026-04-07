@@ -33,7 +33,7 @@ const COMMAND_VARIANTS = [
   },
   { name: 'repeat', variants: ['repeat', 'repeet', 'repete', 're peat', 'ripeat', 'repit', 'ripit'] },
   { name: 'clear', variants: ['clear', 'cleer', 'klear', 'cliar', 'kleer', 'claire'] },
-  { name: 'flag', variants: ['flag', 'flab', 'fleg', 'plag', 'flug', 'plug'] },
+  { name: 'flag', variants: ['flag', 'flab', 'fleg', 'plag'] },
   {
     name: 'help',
     variants: ['help', 'elp', 'halp', 'help help help', 'help help', 'helphelp', 'halp halp', 'elp elp']

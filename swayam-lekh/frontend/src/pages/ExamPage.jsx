@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { useExam } from '../context/ExamContext';
 import { useStudent } from '../context/StudentContext';
 import { useVoice } from '../context/VoiceContext';
-import { useExamTimer } from '../hooks/useExamTimer';
 import { sarvamTranscribe } from '../utils/sarvamSTT';
 import { applyPhoneticMap } from '../utils/phoneticMap';
 
@@ -30,6 +29,7 @@ import { buildQuestionVoiceText } from '../utils/questionSpeech';
 import { isTTSPlaying } from '../utils/audioState.js';
 import { convertMath } from '../utils/mathConverter';
 import MathRenderer from '../components/exam/MathRenderer';
+import { formatTimeToSpeech } from '../utils/formatters';
 
 const MARK_SECTION_ORDER = [1, 2, 3, 5];
 const OPTION_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
@@ -48,11 +48,41 @@ export default function ExamPage() {
     confirmSubmit,
     dismissAlarm,
     triggerAlarm,
+    startExamTimer,
   } = useExam();
 
-  const { student }                         = useStudent();
+  const { student } = useStudent();
   const { mode, setMode, lastCommand, setLastCommand } = useVoice();
-  const { timeLeft, formatted, isWarning, isCritical } = useExamTimer(state.startTime);
+  
+  // State declarations
+  const [micStatus, setMicStatus] = useState('idle'); // idle | requesting | active | error
+  const [micError, setMicError] = useState(null);
+  const [micReady, setMicReady] = useState(false); // true once exam mic stream is open
+  const [showCommandList, setShowCommandList] = useState(false);
+  const [activeSectionId, setActiveSectionId] = useState('all');
+  const [spellMode, setSpellMode] = useState(false);
+  const [examStarted, setExamStarted] = useState(false);
+  const [showMathModal, setShowMathModal] = useState(false);
+  const [currentMathLatex, setCurrentMathLatex] = useState('');
+  const [transcript, setTranscript] = useState('');
+
+  const { timeLeft, timerActive } = state;
+  const timeLeftRef = useRef(timeLeft);
+
+  useEffect(() => {
+    timeLeftRef.current = timeLeft;
+  }, [timeLeft]);
+
+  const isWarning = timeLeft <= 900;
+  const isCritical = timeLeft <= 300;
+  const formatted = new Date(timeLeft * 1000).toISOString().substring(11, 19);
+
+  useEffect(() => {
+    if (examStarted && !timerActive) {
+      startExamTimer();
+    }
+  }, [examStarted, timerActive, startExamTimer]);
+
   const instructionLang = student?.instructionLang === 'ta' ? 'ta' : 'en';
   const examIntroSrc = instructionLang === 'ta' ? '/audio/exam_intro_ta.mp3' : '/audio/exam_intro_en.mp3';
   const introAudioRef = useRef(null);
@@ -74,17 +104,9 @@ export default function ExamPage() {
   const dictationBufferRef = useRef([]);
   const dictationSilenceTimerRef = useRef(null);
   const lastTranscriptTimestampRef = useRef(0);
+  const lastTranscriptTextRef = useRef('');
   const lastReadQuestionRef = useRef(null);
   const commandListAudioRef = useRef(null);
-  const [micStatus, setMicStatus] = useState('idle'); // idle | requesting | active | error
-  const [micError, setMicError] = useState(null);
-  const [micReady, setMicReady] = useState(false); // true once exam mic stream is open
-  const [showCommandList, setShowCommandList] = useState(false);
-  const [activeSectionId, setActiveSectionId] = useState('all');
-  const [spellMode, setSpellMode] = useState(false);
-  const [examStarted, setExamStarted] = useState(false);
-  const [showMathModal, setShowMathModal] = useState(false);
-  const [currentMathLatex, setCurrentMathLatex] = useState('');
 
   const closeCommandList = useCallback(() => {
     setShowCommandList(false);
@@ -197,6 +219,22 @@ export default function ExamPage() {
       }
     }
   }, [showCommandList]);
+
+  const getAssistantIntent = useCallback(async (transcript, context = []) => {
+    try {
+      const resp = await fetch('http://localhost:5000/api/intent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript, context }),
+      });
+      if (!resp.ok) return '';
+      const data = await resp.json();
+      return data.response || '';
+    } catch (err) {
+      console.error('[intent] Failed to get AI response:', err);
+      return '';
+    }
+  }, []);
 
   const noteCommand = useCallback((reason) => {
     if (reason) setLastCommand?.(reason);
@@ -657,6 +695,22 @@ export default function ExamPage() {
           try {
             finalText = await convertMath(normalized);
             console.log(`MathConverter applied: "${normalized}" → "${finalText}"`);
+
+            // NEW: Handle Command Tags from Math Assistant
+            if (finalText.includes('[COMMAND:GET_TIME]')) {
+              const seconds = timeLeftRef.current;
+              const naturalSentence = await getAssistantIntent(`System message: ${seconds} seconds`);
+              if (naturalSentence) {
+                await speakWithRecognitionPause(() => speakText(naturalSentence));
+                noteCommand('Time left dictated by AI Assistant');
+              }
+              return;
+            }
+            if (finalText.includes('[COMMAND:SUBMIT]')) {
+              noteCommand('Submit triggered by AI Assistant');
+              confirmSubmit();
+              return;
+            }
           } catch (err) {
             console.error('Math conversion error:', err);
             // Continue with original normalized text if conversion fails
@@ -690,20 +744,28 @@ export default function ExamPage() {
       }
     };
 
-    const speakWithRecognitionPause = (speaker) => {
+    const speakWithRecognitionPause = async (speaker) => {
       if (typeof speaker !== 'function') return;
       stopRecognition();
-      Promise.resolve(speaker())
-        .then((audio) => {
-          if (!audio) {
-            setTimeout(resumeRecognitionIfNeeded, 300);
-            return;
-          }
-          audio.onended = resumeRecognitionIfNeeded;
-        })
-        .catch(() => {
+      try {
+        const audio = await Promise.resolve(speaker());
+        if (!audio) {
+          await new Promise(resolve => setTimeout(resolve, 300));
           resumeRecognitionIfNeeded();
+          return;
+        }
+        await new Promise((resolve) => {
+          audio.onended = () => {
+            resumeRecognitionIfNeeded();
+            resolve();
+          };
+          // Fallback if onended doesn't fire
+          setTimeout(resolve, 20000); 
         });
+      } catch (err) {
+        console.error('[ExamVoice] Speech action failed:', err);
+        resumeRecognitionIfNeeded();
+      }
     };
 
     const extractQuestionNumber = (text) => {
@@ -746,7 +808,7 @@ export default function ExamPage() {
       return /\b(add|ad|at|hard)\s+point\b/.test(phrase) || /\bbullet\s+point\b/.test(phrase);
     };
 
-    const handleCommandChunk = (chunk) => {
+    const handleCommandChunk = async (chunk) => {
       const normalized = chunk.toLowerCase();
       if (!normalized) return false;
       const commandWordCount = normalized.split(/\s+/).filter(Boolean).length;
@@ -837,7 +899,7 @@ export default function ExamPage() {
 
         const updated = removeLastWords(currentText, count);
         writeCurrentAnswer(updated);
-        speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, updated));
+        await speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, updated));
         noteCommand(count === 1 ? 'Deleted last word' : `Deleted ${count} words`);
         return true;
       }
@@ -914,13 +976,13 @@ export default function ExamPage() {
 
         if (matched === 'repeat') {
           if (normalized.includes('answer')) {
-            speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, currentAnswerRef.current));
+            await speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, currentAnswerRef.current));
             noteCommand('Repeating answer');
           } else if (normalized.includes('option')) {
-            speakWithRecognitionPause(() => speakQuestionAloud(currentQuestion, state.currentIndex));
+            await speakWithRecognitionPause(() => speakQuestionAloud(currentQuestion, state.currentIndex));
             noteCommand('Repeating options');
           } else {
-            speakWithRecognitionPause(() => speakQuestionAloud(currentQuestion, state.currentIndex));
+            await speakWithRecognitionPause(() => speakQuestionAloud(currentQuestion, state.currentIndex));
             noteCommand('Repeating question');
           }
           return true;
@@ -932,7 +994,7 @@ export default function ExamPage() {
             noteCommand('Readback held for maths mode');
             return true;
           }
-          speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, currentAnswerRef.current));
+          await speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, currentAnswerRef.current));
           noteCommand('Repeating answer');
           return true;
         }
@@ -1019,7 +1081,7 @@ export default function ExamPage() {
 
             const updated = removeLastWords(currentText, count);
             writeCurrentAnswer(updated);
-            speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, updated));
+            await speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, updated));
             noteCommand(count === 1 ? 'Deleted last word' : `Deleted ${count} words`);
           }
           return true;
@@ -1118,6 +1180,28 @@ export default function ExamPage() {
           void readMath();
           return true;
         }
+
+        if (matched === 'time left') {
+          // Send to the intent handler first
+          const intent = await getAssistantIntent(normalized);
+          
+          if (intent.includes('[COMMAND:GET_TIME]') || intent.includes('[GET_TIME]')) {
+            const seconds = timeLeftRef.current;
+            const naturalSentence = await getAssistantIntent(`System message: ${seconds} seconds`);
+            
+            if (naturalSentence) {
+              console.log('[ExamVoice] AI Dictating time:', naturalSentence);
+              await speakWithRecognitionPause(() => speakText(naturalSentence));
+              noteCommand('Time left dictated by AI Assistant');
+            } else {
+              const fallbackMsg = formatTimeToSpeech(seconds, instructionLang);
+              await speakWithRecognitionPause(() => speakText(fallbackMsg));
+            }
+          } else if (intent) {
+            await speakWithRecognitionPause(() => speakText(intent));
+          }
+          return true;
+        }
       }
 
       const looseTargetNum = extractQuestionNumber(normalized);
@@ -1145,7 +1229,7 @@ export default function ExamPage() {
           const word = letters.join('');
           const formatted = word.toLowerCase();
           appendDictation(formatted);
-          speakWithRecognitionPause(() => speakText(`Added word: ${formatted}`));
+          await speakWithRecognitionPause(() => speakText(`Added word: ${formatted}`));
           noteCommand('Spell word added');
           return true;
         }
@@ -1162,7 +1246,7 @@ export default function ExamPage() {
           const updated = current.replace(regex, right);
           if (updated !== current) {
             writeCurrentAnswer(updated);
-            speakWithRecognitionPause(() => speakText(`Corrected. The sentence now reads: ${updated}`));
+            await speakWithRecognitionPause(() => speakText(`Corrected. The sentence now reads: ${updated}`));
           }
           noteCommand('Manual correction');
           return true;
@@ -1201,7 +1285,7 @@ export default function ExamPage() {
           const sentences = trimmed.split(/(?<=[.!?\n])\s+/);
           const updated = sentences.length > 1 ? sentences.slice(0, -1).join(' ') : '';
           writeCurrentAnswer(updated);
-          speakWithRecognitionPause(() => speakText(updated ? `Removed last sentence. Now: ${updated}` : 'Removed last sentence.'));
+          await speakWithRecognitionPause(() => speakText(updated ? `Removed last sentence. Now: ${updated}` : 'Removed last sentence.'));
         }
         noteCommand('Scratch last sentence');
         return true;
@@ -1327,15 +1411,20 @@ export default function ExamPage() {
       const rawText = batch.join(' ');
       const punctuated = normalizePunctuation(rawText);
       const corrected = await runCorrectionPipeline(punctuated || rawText);
-      appendDictation(corrected);
+      
+      // Separate the spoken confirmation from the math-converted writing
+      // We speak the "corrected" (natural) text but append it normally (which triggers conversion)
       if (corrected?.trim()) {
         speakWithRecognitionPause(() => speakText(`${heardPrefix}: ${corrected.trim()}`));
       }
+      
+      appendDictation(corrected);
+      setTranscript(''); 
     };
 
     const enqueueDictationWords = async (text = '') => {
       const words = (text || '')
-        .replace(/[^a-z0-9\s'-]/gi, ' ')
+        .replace(/[^a-z0-9\s'+\-*/\\=^]/gi, ' ')
         .split(/\s+/)
         .filter(Boolean);
 
@@ -1424,18 +1513,21 @@ export default function ExamPage() {
     const gap = now - (lastTranscriptTimestampRef.current || 0);
     lastTranscriptTimestampRef.current = now;
 
+    // MATHS MODE: If 'solution' or common variants are heard, insert SOLUTION :
+    const isMathsMode = student?.subjectMode === 'maths';
+
     // Prepare a processed chunk where certain spoken math phrases are converted
-    // Examples: "d of x" -> "dx", "is equal to" -> " = "
+    // only if we are in mathematical subject mode.
     let processedChunk = chunk;
-    // d of x / d x -> dx (single-letter variable)
-    processedChunk = processedChunk.replace(/\bd(?:\s+of)?\s+([a-z])\b/gi, (m, v) => `d${v}`);
-    // map equality phrases to =
-    processedChunk = processedChunk.replace(/\b(is equal to|is equal|equal to)\b/gi, ' = ');
+    if (isMathsMode) {
+      // d of x / d x -> dx (single-letter variable)
+      processedChunk = processedChunk.replace(/\bd(?:\s+of)?\s+([a-z])\b/gi, (m, v) => `d${v}`);
+      // map equality phrases to =
+      processedChunk = processedChunk.replace(/\b(is\s+equal\s+to|is\s+equal|equal\s+to|equals)\b/gi, ' = ');
+    }
 
     const lowerProcessed = processedChunk.trim().toLowerCase();
 
-    // MATHS MODE: If 'solution' or common variants are heard, insert SOLUTION :
-    const isMathsMode = student?.subjectMode === 'maths';
     if (isMathsMode && /\b(solutions?|soltuons|solushun|solushan|solushion|solushen|solushon|solushin|colution|solushyan|solushyen)\b/i.test(lowerProcessed)) {
       // Insert uppercase SOLUTION line, leave 2 blank lines, then a single tab indentation
       // Use ::RAW:: prefix so formatting isn't lowercased or altered
@@ -1459,8 +1551,8 @@ export default function ExamPage() {
 
     // Always attempt command handling first to avoid dumping commands into answer text
     // Use the processed chunk so mapped phrases (e.g. "is equal to" → "=") don't trigger noisy no-match logs
-    const handled = handleCommandChunk(processedChunk);
-    if (handled) continue;
+    const handled = await handleCommandChunk(processedChunk);
+    if (handled) break;
 
     const isMcqQuestion = Array.isArray(currentQuestion?.options) && currentQuestion.options.length;
     if (isMcqQuestion) {
@@ -1548,7 +1640,19 @@ export default function ExamPage() {
           try {
             const transcript = await sarvamTranscribe(blob, langCode);
             if (transcript) {
+              const now = Date.now();
+              const isDuplicate = transcript === lastTranscriptTextRef.current && (now - lastTranscriptTimestampRef.current < 2500);
+              
+              if (isDuplicate) {
+                console.log('[ExamVoice] Ignoring duplicate transcript:', transcript);
+                return;
+              }
+
+              lastTranscriptTextRef.current = transcript;
+              lastTranscriptTimestampRef.current = now;
+              
               console.log('[ExamVoice] Heard:', transcript);
+              setTranscript(transcript);
               await processTranscript(transcript);
             }
           } catch (err) {
@@ -1706,6 +1810,7 @@ export default function ExamPage() {
             onToggleFlag={() => toggleFlag(currentQuestion.id)}
           />
         </div>
+
         <AnswerBox
           answer={currentAnswer}
           onAnswerChange={(partOrValue, maybeValue) => { /* existing code */ }}

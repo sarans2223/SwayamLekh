@@ -23,12 +23,13 @@ const COMMAND_HINTS = {
   finish: ['finish', 'finish exam', 'end exam', 'submit exam', 'finish now', 'end now'],
   repeat: ['repeat', 'repeet', 'repete', 're peat', 'ripeat', 'repit', 'ripit'],
   clear: ['clear', 'cleer', 'klear', 'cliar', 'kleer', 'claire'],
-  flag: ['flag', 'flab', 'fleg', 'plag', 'flug', 'plug'],
+  flag: ['flag', 'flab', 'fleg', 'plag'],
   help: ['help', 'elp', 'halp', 'help help help', 'help help', 'helphelp', 'halp halp', 'elp elp'],
   'list commands': ['list commands', 'list the commands', 'show commands', 'show the commands', 'command list', 'commands list'],
   'skip skip': ['skip skip', 'skipskip'],
   start: ['start', 'staart', 'tart', 'estart', 'istart', 'estaan', 'estaat'],
   'go to': ['go to', 'goto', 'go two', 'go-to', 'gotu', 'gato'],
+  'time left': ['time left', 'remaining time', 'how much time', 'test time', 'exam time', 'time remaining', 'what is the time'],
 };
 
 function countWordOccurrences(normalized, targetWords) {
