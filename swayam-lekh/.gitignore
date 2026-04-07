@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Builds / caches
+dist/
+.parcel-cache/
+.turbo/
+.next/
+out/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Env
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+*.env
