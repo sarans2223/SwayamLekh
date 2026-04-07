@@ -8,6 +8,7 @@ const COMMAND_VARIANTS = [
       'sabmeet', 'sub mit', 'some it'
     ]
   },
+  { name: 'skip skip', variants: ['skip skip', 'skipskip'] },
   {
     name: 'skip',
     variants: [
@@ -41,6 +42,7 @@ const COMMAND_VARIANTS = [
     name: 'list commands',
     variants: ['list commands', 'list the commands', 'show commands', 'show the commands', 'command list', 'commands list']
   },
+  { name: 'skip skip', variants: ['skip skip', 'skipskip'] },
   { name: 'start', variants: ['start', 'staart', 'tart', 'estart', 'istart', 'estaan', 'estaat'] },
   { name: 'go to', variants: ['go to', 'goto', 'go two', 'go-to', 'gotu', 'gato'] }
 ];

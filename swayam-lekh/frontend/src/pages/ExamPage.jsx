@@ -67,6 +67,7 @@ export default function ExamPage() {
   const dictationBufferRef = useRef([]);
   const dictationSilenceTimerRef = useRef(null);
   const lastReadQuestionRef = useRef(null);
+  const commandListAudioRef = useRef(null);
   const [micStatus, setMicStatus] = useState('idle'); // idle | requesting | active | error
   const [micError, setMicError] = useState(null);
   const [micReady, setMicReady] = useState(false); // true once exam mic stream is open
@@ -165,13 +166,27 @@ export default function ExamPage() {
   }, [audioQuestions, preloadAllQuestions, stopAudio]);
 
   useEffect(() => {
-    if (examStarted || !cacheReady || !state.questions?.length) return;
+    if (examStarted || !state.questions?.length) return;
     setExamStarted(true);
     lastReadQuestionRef.current = state.questions[0].id;
     playQuestion(state.questions[0].id, buildQuestionVoiceText(state.questions[0], 0), {
       isMaths: state.questions[0]?.subject === 'maths',
     });
-  }, [cacheReady, examStarted, playQuestion, state.questions]);
+  }, [examStarted, playQuestion, state.questions]);
+
+  useEffect(() => {
+    if (showCommandList) {
+      commandListAudioRef.current = new Audio('/audio/commandListAudio.mp3');
+      commandListAudioRef.current.addEventListener('ended', () => setShowCommandList(false));
+      commandListAudioRef.current.play().catch((err) => console.error('Failed to play command list audio:', err));
+    } else {
+      if (commandListAudioRef.current) {
+        commandListAudioRef.current.pause();
+        commandListAudioRef.current.currentTime = 0;
+        commandListAudioRef.current = null;
+      }
+    }
+  }, [showCommandList]);
 
   const noteCommand = useCallback((reason) => {
     if (reason) setLastCommand?.(reason);
@@ -237,6 +252,16 @@ export default function ExamPage() {
     }
     return speakText(narration);
   }, [instructionLang, speakText]);
+
+  useEffect(() => {
+    if (!showCommandList && examStarted && state.questions?.length) {
+      const currentQuestion = state.questions[state.currentQuestionIndex];
+      if (currentQuestion) {
+        speakQuestionAloud(currentQuestion, state.currentQuestionIndex);
+      }
+      startPersistentMic();
+    }
+  }, [showCommandList, examStarted, state.questions, state.currentQuestionIndex, speakQuestionAloud, startPersistentMic]);
 
   useEffect(() => {
     const audio = new Audio(examIntroSrc);
@@ -758,10 +783,21 @@ export default function ExamPage() {
       if (matched) {
         if (matched === 'list commands') {
           optionCaptured = true;
-          stopRecognition();
           setShowCommandList(true);
           noteCommand('Command list opened');
           return true;
+        }
+
+        if (matched === 'skip skip') {
+          if (showCommandList) {
+            if (commandListAudioRef.current) {
+              commandListAudioRef.current.pause();
+              commandListAudioRef.current.currentTime = 0;
+            }
+            setShowCommandList(false);
+            noteCommand('Command list closed');
+            return true;
+          }
         }
 
         if (matched === 'stop' || matched === 'help') {
