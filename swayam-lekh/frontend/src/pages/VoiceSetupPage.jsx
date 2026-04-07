@@ -26,36 +26,6 @@ function extractDigits(text) {
   return digits;
 }
 
-// ─── Audio helper — resolves only when audio ENDS (or errors) ─────────────────
-function playAudioFull(src) {
-  return new Promise((resolve) => {
-    const a = new Audio(src);
-    a.onended = () => resolve({ ok: true });
-    a.onerror = () => resolve({ ok: false });
-    a.play().catch(() => resolve({ ok: false, blocked: true }));
-  });
-}
-
-// ─── Audio helper — resolves as soon as it STARTS (non-blocking) ──────────────
-function playAudioStart(src) {
-  return new Promise((resolve) => {
-    const a = new Audio(src);
-    let settled = false;
-    const done = (payload) => {
-      if (settled) return;
-      settled = true;
-      resolve({ ...payload, el: a });
-    };
-
-    a.onerror   = () => done({ ok: false, blocked: false });
-    a.onplaying = () => done({ ok: true, blocked: false });
-    a.play().catch(() => done({ ok: false, blocked: true }));
-
-    // If neither onplaying nor play rejection arrives quickly, treat as playback failure.
-    setTimeout(() => done({ ok: false, blocked: false }), 5000);
-  });
-}
-
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function VoiceSetupPage() {
   const navigate    = useNavigate();
@@ -123,6 +93,28 @@ export default function VoiceSetupPage() {
   const taskDoneRef  = useRef([false, false, false]);
   const blockedAudio = useRef(null);
   const srStarted    = useRef(false);  // guard to prevent SR from being started before intro ends
+  const currentAudioRef = useRef(null);
+
+  // ─── Audio helper — resolves only when audio ENDS (or errors) ─────────────────
+  function playAudioFull(src) {
+    return new Promise((resolve) => {
+      const a = new Audio(src);
+      currentAudioRef.current = a;
+      a.onended = () => resolve({ ok: true });
+      a.onerror = () => resolve({ ok: false });
+      a.play().catch(() => resolve({ ok: false, blocked: true }));
+    });
+  }
+
+  // ─── Audio helper — resolves immediately after play() succeeds ──────────────
+  function playAudioStart(src) {
+    return new Promise((resolve) => {
+      const a = new Audio(src);
+      currentAudioRef.current = a;
+      a.onerror = () => resolve({ ok: false, blocked: false, el: a });
+      a.play().then(() => resolve({ ok: true, blocked: false, el: a })).catch(() => resolve({ ok: false, blocked: true, el: a }));
+    });
+  }
 
   // ── Cleanup on unmount ────────────────────────────────────────────────────
   useEffect(() => () => {
@@ -130,6 +122,10 @@ export default function VoiceSetupPage() {
     cancelAnimationFrame(rafRef.current);
     try { srRef.current?.stop(); } catch (_) {}
     streamRef.current?.getTracks().forEach((t) => t.stop());
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+    }
   }, []);
 
   // ── Visualiser (single muted colour — no colour gradient) ─────────────────
