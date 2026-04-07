@@ -15,7 +15,9 @@ export default function AnswerBox({ answer = "", isActive, onAnswerChange, subje
   }, [answer, isPartQuestion]);
 
   const hasLatexContent = (text) => {
-    return text.includes('\\') || text.includes('^') || text.includes('_');
+    if (!text) return false;
+    const latexIndicators = /[\\^_⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]/;
+    return latexIndicators.test(text);
   };
 
   const handleInput = (e) => {
@@ -127,8 +129,14 @@ export default function AnswerBox({ answer = "", isActive, onAnswerChange, subje
           })}
         </div>
       ) : (subjectMode === 'maths' || subjectMode === 'chemistry') && answer && hasLatexContent(answer) ? (
-        <div style={{ padding: '24px', minHeight: '150px', fontSize: '20px' }}>
-          <EquationRenderer latex={answer} inline={false} />
+        <div style={{ padding: '24px', minHeight: '150px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {answer.split('\n').map((line, idx) => (
+            line.trim() ? (
+              <EquationRenderer key={`eq-${idx}`} latex={line.trim()} inline={false} />
+            ) : (
+              <div key={`br-${idx}`} style={{ height: '1.2em' }} /> // Preserve blank lines
+            )
+          ))}
         </div>
       ) : (
         <div 

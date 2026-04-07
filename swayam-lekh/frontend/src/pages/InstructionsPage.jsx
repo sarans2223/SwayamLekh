@@ -146,10 +146,19 @@ export default function InstructionsPage() {
         return;
       }
       if (e.error === 'not-allowed') return;
+      if (e.error === 'no-speech') {
+        // "no-speech" is normal - don't restart immediately
+        console.log('[Instructions] no speech detected (normal)');
+        return;
+      }
       if (!abortRef.current) {
         skipCountRef.current += sessionSkips;  // commit the skips we heard in this session
         sessionSkips = 0;
-        try { sr.start(); } catch (_) {}
+        setTimeout(() => {
+          if (!abortRef.current) {
+            try { sr.start(); } catch (_) {}
+          }
+        }, 1000); // 1 second delay
       }
     };
 
@@ -157,7 +166,11 @@ export default function InstructionsPage() {
       if (!abortRef.current) {
         skipCountRef.current += sessionSkips;  // commit the skips we heard in this session
         sessionSkips = 0;
-        try { sr.start(); } catch (_) {}
+        setTimeout(() => {
+          if (!abortRef.current) {
+            try { sr.start(); } catch (_) {}
+          }
+        }, 1500); // 1.5 second delay
       }
     };
 

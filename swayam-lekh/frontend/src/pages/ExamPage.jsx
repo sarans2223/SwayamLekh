@@ -51,13 +51,18 @@ export default function ExamPage() {
   } = useExam();
 
   const { student }                         = useStudent();
-  const { mode, lastCommand, setLastCommand } = useVoice();
+  const { mode, setMode, lastCommand, setLastCommand } = useVoice();
   const { timeLeft, formatted, isWarning, isCritical } = useExamTimer(state.startTime);
   const instructionLang = student?.instructionLang === 'ta' ? 'ta' : 'en';
   const examIntroSrc = instructionLang === 'ta' ? '/audio/exam_intro_ta.mp3' : '/audio/exam_intro_en.mp3';
   const introAudioRef = useRef(null);
   const [introBlocked, setIntroBlocked] = useState(false);
   const [introCompleted, setIntroCompleted] = useState(false);
+  const modeRef = useRef(mode);
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
   const examMicRef = useRef(null);
   const hasLockedMicRef = useRef(false);
   const sarvamAudioRef = useRef(null);
@@ -648,7 +653,7 @@ export default function ExamPage() {
 
         // Apply math conversion in maths mode when in ANSWER mode
         const isMathsMode = student?.subjectMode === 'maths';
-        if (isMathsMode && mode === 'ANSWER') {
+        if (isMathsMode && modeRef.current === 'ANSWER') {
           try {
             finalText = await convertMath(normalized);
             console.log(`MathConverter applied: "${normalized}" → "${finalText}"`);
@@ -799,13 +804,38 @@ export default function ExamPage() {
           return true;
         }
 
-        const words = getActiveAnswerText(currentAnswerRef.current).trim().split(/\s+/).filter(Boolean);
-        if (words.length === 0) {
+        const currentText = getActiveAnswerText(currentAnswerRef.current);
+        if (!currentText.trim()) {
           noteCommand('Nothing to delete');
           return true;
         }
-        const trimmed = count >= words.length ? [] : words.slice(0, words.length - count);
-        const updated = trimmed.join(' ');
+
+        // Function to remove last N words while preserving exact formatting
+        const removeLastWords = (text, count) => {
+          if (count <= 0) return text;
+
+          // Find all word boundaries (sequences of non-whitespace)
+          const words = [];
+          let match;
+          const wordRegex = /\S+/g;
+          while ((match = wordRegex.exec(text)) !== null) {
+            words.push({
+              word: match[0],
+              start: match.index,
+              end: match.index + match[0].length
+            });
+          }
+
+          if (words.length < count) {
+            return ''; // Remove everything if not enough words
+          }
+
+          // Find the start position of the words to remove
+          const firstWordToRemove = words[words.length - count];
+          return text.substring(0, firstWordToRemove.start).trimEnd();
+        };
+
+        const updated = removeLastWords(currentText, count);
         writeCurrentAnswer(updated);
         speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, updated));
         noteCommand(count === 1 ? 'Deleted last word' : `Deleted ${count} words`);
@@ -956,13 +986,38 @@ export default function ExamPage() {
             noteCommand('Cleared answer');
           } else {
             const count = extractDeleteCount(normalized);
-            const words = getActiveAnswerText(currentAnswerRef.current).trim().split(/\s+/).filter(Boolean);
-            if (words.length === 0) {
+            const currentText = getActiveAnswerText(currentAnswerRef.current);
+            if (!currentText.trim()) {
               noteCommand('Nothing to delete');
               return true;
             }
-            const trimmed = count >= words.length ? [] : words.slice(0, words.length - count);
-            const updated = trimmed.join(' ');
+
+            // Function to remove last N words while preserving exact formatting
+            const removeLastWords = (text, count) => {
+              if (count <= 0) return text;
+
+              // Find all word boundaries (sequences of non-whitespace)
+              const words = [];
+              let match;
+              const wordRegex = /\S+/g;
+              while ((match = wordRegex.exec(text)) !== null) {
+                words.push({
+                  word: match[0],
+                  start: match.index,
+                  end: match.index + match[0].length
+                });
+              }
+
+              if (words.length < count) {
+                return ''; // Remove everything if not enough words
+              }
+
+              // Find the start position of the words to remove
+              const firstWordToRemove = words[words.length - count];
+              return text.substring(0, firstWordToRemove.start).trimEnd();
+            };
+
+            const updated = removeLastWords(currentText, count);
             writeCurrentAnswer(updated);
             speakWithRecognitionPause(() => speakAnswerAloud(currentQuestion, updated));
             noteCommand(count === 1 ? 'Deleted last word' : `Deleted ${count} words`);
@@ -1385,6 +1440,10 @@ export default function ExamPage() {
       // Insert uppercase SOLUTION line, leave 2 blank lines, then a single tab indentation
       // Use ::RAW:: prefix so formatting isn't lowercased or altered
       appendDictation('::RAW::\nSOLUTION :\n\n\n\t');
+      
+      // CRITICAL: Switch to ANSWER mode (for math conversion) and update ref immediately 
+      setMode('ANSWER');
+      modeRef.current = 'ANSWER';
       continue;
     }
 

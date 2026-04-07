@@ -288,23 +288,41 @@ export default function VoiceSetupPage() {
 
     sr.onerror = (e) => {
       console.error('[SR] onerror:', e.error);
-      if (e.error === 'not-allowed') { 
+
+      if (e.error === 'not-allowed') {
         console.error('[SR] Microphone permission denied');
-        setStatusMsg('⚠️ Mic blocked by browser.'); 
-        return; 
+        setStatusMsg('⚠️ Mic blocked by browser.');
+        return;
       }
-      if (!dead.current) { 
+
+      if (e.error === 'no-speech') {
+        // "no-speech" is normal - just log it, don't restart immediately
+        console.log('[SR] no speech detected (normal)');
+        return;
+      }
+
+      // For other errors, restart after a short delay
+      if (!dead.current) {
         console.log('[SR] restarting after error...');
-        try { sr.start(); } catch (_) {} 
+        setTimeout(() => {
+          if (!dead.current) {
+            try { sr.start(); } catch (_) {}
+          }
+        }, 1000); // 1 second delay
       }
     };
 
-    sr.onend = () => { 
+    sr.onend = () => {
       console.log('[SR] onend - speech recognition ended');
-      if (!dead.current) { 
-        console.log('[SR] restarting...');
-        try { sr.start(); } catch (_) {} 
-      } 
+      if (!dead.current) {
+        console.log('[SR] restarting in 2 seconds...');
+        // Add a delay before restarting to prevent aggressive restarting
+        setTimeout(() => {
+          if (!dead.current) {
+            try { sr.start(); } catch (_) {}
+          }
+        }, 2000); // 2 second delay
+      }
     };
 
     srRef.current = sr;

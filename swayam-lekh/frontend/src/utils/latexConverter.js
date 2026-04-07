@@ -17,5 +17,5 @@ export function renderLatexToString(latex) {
 
 export function hasLatex(text) {
   if (!text) return false;
-  return text.includes('\') || text.includes('_') || text.includes('^');
+  return /[\\^_⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]/.test(text);
 }

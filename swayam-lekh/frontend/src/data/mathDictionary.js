@@ -111,6 +111,11 @@ export const MATH_PATTERNS = [
     pattern: /(.+?) to the power (.+)/gi,
     replacement: (m, base, exp) => `${base}^{${exp}}`
   },
+  // "x square" → x^2 (handles spoken form like "a square" or "b square")
+  {
+    pattern: /(.+?) square/gi,
+    replacement: (m, base) => `${base}^2`
+  },
   // "x squared" → x² (works for ANY base: a squared, sin theta squared, 5 squared)
   {
     pattern: /(.+?) squared/gi,

@@ -41,97 +41,72 @@ export function convertSpokenMathToLatex(spokenText) {
 }
 
 /**
- * Uses Groq LLaMA as a fallback for expressions the pattern engine couldn't handle
+ * Uses the backend Math Scribe API for high-precision LaTeX conversion
  * @param {string} spokenText - The spoken expression
- * @returns {Promise<string>} - LaTeX notation from Groq
+ * @param {string} currentMath - (Optional) The current LaTeX state for incremental updates
+ * @returns {Promise<string>} - LaTeX notation from the backend
  */
-export async function convertWithGroq(spokenText) {
+export async function convertWithBackendScribe(spokenText, currentMath = null) {
   if (!spokenText || typeof spokenText !== 'string') {
     return '';
   }
 
   try {
-    const apiKey = import.meta.env.VITE_GROQ_API_KEY;
-    
-    if (!apiKey) {
-      console.warn('MathConverter: Groq API key not configured');
-      return spokenText;
-    }
+    const payload = currentMath 
+      ? { currentMath, newVoiceInput: spokenText }
+      : { rawText: spokenText };
 
-    const systemPrompt = `You are a math notation converter for Indian high school and JEE students.
-Convert spoken math English to LaTeX notation.
-Return ONLY the LaTeX string. No explanation. No markdown. No backticks.
-The student may say variables like x, y, a, b, theta, alpha or any letter.
-Apply patterns dynamically to whatever variable or expression they use.
-Examples:
-"x squared" → x^2
-"a squared" → a^2
-"sin theta squared" → \\sin^2(\\theta)
-"integral from 0 to pi of sin x dx" → \\int_{0}^{\\pi} \\sin(x) \\, dx
-"limit x tends to 0 of sin x by x" → \\lim_{x \\to 0} \\frac{\\sin x}{x}
-"a plus b whole squared" → (a+b)^2
-"e to the power minus x" → e^{-x}`;
-
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    const response = await fetch('/api/math-scribe', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt,
-          },
-          {
-            role: 'user',
-            content: `Convert to LaTeX: "${spokenText}"`,
-          },
-        ],
-        temperature: 0.1,
-        max_tokens: 300,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      console.error('MathConverter Groq error:', errorData);
+      const errorData = await response.json().catch(() => ({}));
+      console.error('Math Scribe API error:', errorData);
       return spokenText;
     }
 
     const data = await response.json();
-    const groqOutput = data.choices?.[0]?.message?.content?.trim() || '';
-    
-    console.log(`MathConverter Groq fallback: "${spokenText}" → "${groqOutput}"`);
-    return groqOutput || spokenText;
+    return data.latex || spokenText;
   } catch (err) {
-    console.error('MathConverter Groq API call failed:', err);
+    console.error('Math Scribe API call failed:', err);
     return spokenText;
   }
 }
 
 /**
- * Main conversion function: pattern engine first, Groq fallback if needed
+ * Main conversion function: pattern engine first, backend Math Scribe fallback
  * @param {string} spokenText - The spoken math expression
+ * @param {string} currentMath - (Optional) The current LaTeX state for incremental updates
  * @returns {Promise<string>} - Final LaTeX notation
  */
-export async function convertMath(spokenText) {
+export async function convertMath(spokenText, currentMath = null) {
   if (!spokenText || typeof spokenText !== 'string') {
     return '';
   }
 
-  // First attempt: pattern engine
+  // Log the request
+  console.log('MathConverter: Input:', { spokenText, currentMath });
+
+  // First attempt: pattern engine (fast for basic stuff)
   let result = convertSpokenMathToLatex(spokenText);
 
-  // Check if there are still unconverted words (fallback to Groq)
-  const containsUnconvertedWords = /\b(and|or|the|a|of|in|to|from|with|by|for|is|are)\b/gi.test(result);
+  // Check if the pattern engine did anything meaningful or if there are still words
+  // For most education-level math, we want the high-precision backend anyway
+  const needsHighPrecision = /\b(whole|quantity|divided by|integral|limit|summation|of|from|to)\b/gi.test(spokenText) || 
+                            result === spokenText;
   
-  if (containsUnconvertedWords && result === spokenText) {
-    // Pattern engine didn't match anything, try Groq
-    console.log('MathConverter: Pattern engine insufficient, calling Groq fallback');
-    result = await convertWithGroq(spokenText);
+  if (needsHighPrecision) {
+    console.log('MathConverter: Requesting high-precision backend conversion');
+    try {
+      result = await convertWithBackendScribe(spokenText, currentMath);
+    } catch (err) {
+      console.warn('MathConverter: Backend conversion failed, using regex result', err);
+    }
   }
 
   return result;

@@ -133,3 +133,31 @@ export function matchCommand(transcript) {
   console.debug(`[CommandMatcher] no match for "${transcript}"`);
   return null;
 }
+
+/**
+ * Detect voice commands from a custom command map
+ * @param {string} transcript - The speech transcript to analyze
+ * @param {object} commandMap - Object mapping phrases to command names
+ * @returns {string|null} The matched command name or null
+ */
+export function detectVoiceCommand(transcript, commandMap = {}) {
+  const normalized = normalize(transcript);
+  if (!normalized) return null;
+
+  // Check for exact matches in the command map
+  for (const [phrase, command] of Object.entries(commandMap)) {
+    const phraseNorm = normalize(phrase);
+    if (hasStandalonePhrase(normalized, phraseNorm)) {
+      console.log(`[VoiceCommand] detected: ${command} from "${phrase}" in "${transcript}"`);
+      return command;
+    }
+  }
+
+  // Check for fuzzy matches using existing command variants
+  const matchedCommand = matchCommand(transcript);
+  if (matchedCommand && commandMap[matchedCommand]) {
+    return commandMap[matchedCommand];
+  }
+
+  return null;
+}
