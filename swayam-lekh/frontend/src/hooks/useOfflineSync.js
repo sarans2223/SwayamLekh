@@ -4,7 +4,7 @@ export function useOfflineSync() {
   const pendingCount = 0;
 
   const syncNow = () => {
-    console.log("Mock sync now");
+    if (import.meta.env.DEV) console.log("Mock sync now");
   };
 
   return { syncing, pendingCount, syncNow };

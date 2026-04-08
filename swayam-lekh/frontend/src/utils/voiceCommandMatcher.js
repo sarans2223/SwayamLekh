@@ -31,6 +31,7 @@ const COMMAND_HINTS = {
     'udhavi', 'theriyala', 'help panunga', 'assist', 'assistant'
   ],
   'list commands': ['list commands', 'list the commands', 'show commands', 'show the commands', 'command list', 'commands list'],
+  'skip skip': ['skip skip', 'skipskip'],
   start: ['start', 'staart', 'tart', 'estart', 'istart', 'estaan', 'estaat'],
   'go to': ['go to', 'goto', 'go two', 'go-to', 'gotu', 'gato'],
 };

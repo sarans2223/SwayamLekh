@@ -20,6 +20,9 @@ export class RealtimeSTTManager {
     this.onError = options.onError || (() => {});
     this.onStatusChange = options.onStatusChange || (() => {});
 
+    // Toggle printing detected transcripts to console
+    this.LOG_DETECTED_SPEECH = true;
+
     // Audio configuration
     this.SAMPLE_RATE = 16000;
     this.CHUNK_SIZE = 4096;
@@ -39,6 +42,9 @@ export class RealtimeSTTManager {
     this.vadActive = false;
     this.resampler = null;
   }
+
+  // Toggle verbose logging for debugging
+  static VERBOSE = false;
 
   /**
    * Start recording and processing audio
@@ -67,7 +73,7 @@ export class RealtimeSTTManager {
       this._setupAnalyser();
       this._setupVAD();
 
-      console.log('[STT] Recording started');
+      if (RealtimeSTTManager.VERBOSE) console.log('[STT] Recording started');
     } catch (err) {
       this._updateStatus('error');
       this.onError(new Error(`Microphone access denied: ${err.message}`));
@@ -96,7 +102,7 @@ export class RealtimeSTTManager {
       await this.audioContext.close();
     }
 
-    console.log('[STT] Recording stopped');
+    if (RealtimeSTTManager.VERBOSE) console.log('[STT] Recording stopped');
   }
 
   /**
@@ -374,6 +380,7 @@ export class RealtimeSTTManager {
       const transcript = await this._callSTTAPI(wavBuffer);
 
       if (transcript) {
+        if (this.LOG_DETECTED_SPEECH) console.log('[RealtimeSTT] Detected transcript:', transcript, 'conf≈0.95');
         this.onTranscript(transcript, 0.95); // Confidence from API
         this.onInterim('');
       }

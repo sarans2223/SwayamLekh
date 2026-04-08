@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Auto Student (WebRTC Auto-Answer)</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 16px; }
+    #logs { white-space: pre-wrap; background:#f7f9fc; padding:8px; border:1px solid #e6eefc; height:240px; overflow:auto }
+    video { width: 320px; height: 240px; background: #000; }
+  </style>
+</head>
+<body>
+  <h3>Auto Student - Test Page</h3>
+  <div>
+    <label>Socket URL: <input id="url" value="http://localhost:3001" style="width:320px" /></label>
+  </div>
+  <div>
+    <label>Register No: <input id="reg" value="sim-auto" /></label>
+  </div>
+  <div>
+    <label>Name: <input id="name" value="Auto Student" /></label>
+  </div>
+  <div style="margin-top:8px">
+    <button id="start">Connect & Register</button>
+  </div>
+
+  <h4>Local Camera Preview</h4>
+  <video id="local" autoplay playsinline muted></video>
+
+  <h4>Logs</h4>
+  <div id="logs"></div>
+
+  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+  <script>
+    const logEl = document.getElementById('logs');
+    function log(...args){ console.log(...args); logEl.textContent += args.map(a=> typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ') + '\n'; logEl.scrollTop = logEl.scrollHeight; }
+
+    let socket, pc, localStream;
+    document.getElementById('start').addEventListener('click', async () => {
+        const url = document.getElementById('url').value || 'http://localhost:3001';
+        const register_no = document.getElementById('reg').value || 'sim-auto';
+        const student_name = document.getElementById('name').value || 'Auto Student';
+
+      socket = io(url, { transports: ['websocket'] });
+      socket.on('connect', () => {
+        log('[auto-student] connected', socket.id);
+        socket.emit('student_status', { register_no, student_name, answered: 0, total: 10, status: 'active' });
+        log('[auto-student] sent student_status');
+      });
+
+      socket.on('webrtc_offer', async (data) => {
+        try {
+          log('[auto-student] webrtc_offer', data);
+          const { from, sdp } = data || {};
+          // get local camera+mic
+          localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          document.getElementById('local').srcObject = localStream;
+
+          pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+          pc.onicecandidate = (e) => { if (e.candidate) socket.emit('webrtc_ice', { to: from, candidate: e.candidate }); };
+          pc.ontrack = (ev) => { log('[auto-student] ontrack', ev); };
+
+          for (const t of localStream.getTracks()) pc.addTrack(t, localStream);
+
+          await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+
+          socket.emit('webrtc_answer', { to: from, sdp: pc.localDescription });
+          log('[auto-student] sent answer');
+        } catch (err) { log('[auto-student] offer handling error', err); }
+      });
+
+      socket.on('webrtc_ice', async (data) => {
+        try {
+          const { from, candidate } = data || {};
+          if (candidate && pc) await pc.addIceCandidate(candidate);
+          log('[auto-student] added remote ice', candidate);
+        } catch (err) { log('[auto-student] addIce error', err); }
+      });
+
+      socket.on('drawing_data', (d) => { log('[auto-student] drawing_data', d); });
+      socket.on('proctor_audio_start', (d) => { log('[auto-student] proctor_audio_start', d); });
+
+      socket.on('disconnect', () => log('[auto-student] disconnected'));
+    });
+
+      // Auto-connect if register_no provided in query params
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const qreg = params.get('reg');
+        const qname = params.get('name');
+        const qurl = params.get('url');
+        if (qreg) {
+          if (qurl) document.getElementById('url').value = qurl;
+          if (qreg) document.getElementById('reg').value = qreg;
+          if (qname) document.getElementById('name').value = qname;
+          // slight delay to allow page to finish loading
+          setTimeout(() => document.getElementById('start').click(), 300);
+        }
+      } catch (e) { /* ignore */ }
+  </script>
+</body>
+</html>

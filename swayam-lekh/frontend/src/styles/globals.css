@@ -1,101 +1,90 @@
-@import './variables.css';
-@import './animations.css';
+/* src/styles/globals.css */
 
-* {
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600&display=swap');
+@import './variables.css';
+
+*, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+}
+
+html {
+  font-size: 16px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 body {
-  font-family: var(--font-body);
-  background-color: var(--bg);
-  color: var(--ink);
-  line-height: 1.5;
-  font-size: 14px; /* Standard JEE size */
-}
-
-#root {
+  font-family: var(--font-sans);
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+  line-height: 1.6;
   min-height: 100vh;
 }
 
-h1, h2, h3, h4, h5, h6 {
-  font-family: var(--font-heading);
-  font-weight: bold;
-  color: var(--ink);
+h1, h2, h3 {
+  font-family: var(--font-serif);
+  line-height: 1.2;
 }
 
-/* JEE FORM FIELDS */
-input, select, textarea {
-  font-family: inherit;
-  font-size: 14px;
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background-color: var(--surface);
-  color: var(--ink);
-  outline: none;
-  transition: border-color 0.2s;
+h1 { font-size: var(--text-3xl); }
+h2 { font-size: var(--text-2xl); }
+h3 { font-size: var(--text-xl); }
+
+p {
+  font-size: var(--text-base);
+  color: var(--color-text-secondary);
 }
 
-input:focus {
-  border-color: var(--accent);
-  box-shadow: inset 0 1px 1px rgba(0,0,0,0.075);
-}
-
-input:valid {
-  border-color: var(--green);
-}
-
-label {
-  display: block;
-  font-size: 13px;
-  font-weight: bold;
-  margin-bottom: 4px;
-  color: var(--ink);
-}
-
-/* JEE BUTTONS */
 button {
-  font-family: inherit;
-  font-weight: bold;
+  font-family: var(--font-sans);
   cursor: pointer;
   border: none;
   outline: none;
+  background: none;
 }
 
-a {
-  text-decoration: none;
-  color: var(--accent);
+input {
+  font-family: var(--font-sans);
+  outline: none;
 }
 
-/* UTILS */
-.container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 24px;
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: var(--radius-full);
 }
 
-.flex-center {
+/* Utility classes */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+}
+
+.page-container {
+  min-height: 100vh;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  padding: var(--space-8);
 }
 
-/* NO ANIMATIONS EXCEPT CORE ONES */
-* {
-  animation-duration: 0.1s !important; /* Extremely minimal delay if any */
-  transition-duration: 0.1s !important;
-}
-
-.flash-red {
-  animation: flashRed 1s infinite alternate;
-}
-
-@keyframes flashRed {
-  from { background-color: var(--surface); }
-  to { background-color: var(--red-light); }
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  padding: var(--space-8);
+  box-shadow: var(--shadow-sm);
 }
