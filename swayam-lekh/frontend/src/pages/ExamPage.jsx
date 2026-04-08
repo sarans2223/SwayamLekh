@@ -25,6 +25,7 @@ import { COMMANDS } from '../constants/commands';
 import { detectVoiceCommand } from '../utils/voiceCommandMatcher';
 import { extractQuestionParts, normalizePartAnswers, getPartAnswer, setPartAnswer } from '../utils/questionParts';
 import { MATHS_SAMPLE_QUESTIONS } from '../data/mathsSampleQuestions';
+import { CHEMISTRY_SAMPLE_QUESTIONS } from '../data/chemistrySampleQuestions';
 import { buildQuestionVoiceText } from '../utils/questionSpeech';
 import { isTTSPlaying } from '../utils/audioState.js';
 import { convertMath } from '../utils/mathConverter';
@@ -113,9 +114,10 @@ export default function ExamPage() {
   }, []);
 
   useEffect(() => {
-    const isMathsMode = student?.subjectMode === 'maths';
-    if (isMathsMode) {
+    if (student?.subjectMode === 'maths') {
       setQuestions(MATHS_SAMPLE_QUESTIONS);
+    } else if (student?.subjectMode === 'chemistry') {
+      setQuestions(CHEMISTRY_SAMPLE_QUESTIONS);
     }
   }, [setQuestions, student?.subjectMode]);
 
@@ -689,9 +691,9 @@ export default function ExamPage() {
       const innerAppend = async () => {
         let finalText = normalized;
 
-        // Apply math conversion in maths mode when in ANSWER mode
-        const isMathsMode = student?.subjectMode === 'maths';
-        if (isMathsMode && modeRef.current === 'ANSWER') {
+        // Apply conversion in maths/chemistry mode when in ANSWER mode
+        const isMathsOrChemistry = ['maths', 'chemistry'].includes(student?.subjectMode) || !student?.subjectMode || student?.subjectMode === 'general';
+        if (isMathsOrChemistry && modeRef.current === 'ANSWER') {
           try {
             finalText = await convertMath(normalized);
             console.log(`MathConverter applied: "${normalized}" → "${finalText}"`);

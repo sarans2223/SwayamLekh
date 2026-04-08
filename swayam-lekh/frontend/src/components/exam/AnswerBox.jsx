@@ -19,7 +19,7 @@ export default function AnswerBox({ answer = "", isActive, onAnswerChange, subje
     // Trigger math rendering on LaTeX commands (\), powers (^), subscripts (_),
     // or common mathematical operators that deserve KaTeX formatting.
     // Note: We use \ as the primary indicator for complex symbols.
-    const latexIndicators = /[\\^_⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉=+\-×÷±<>]|\\int|\\sum|\\sqrt|\\ge|\\le|\\pm|\\neq/;
+    const latexIndicators = /[\\^_⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉=+\-×÷±<>\n]|\\int|\\sum|\\sqrt|\\ge|\\le|\\pm|\\neq/;
     return latexIndicators.test(text);
   };
 
@@ -131,7 +131,7 @@ export default function AnswerBox({ answer = "", isActive, onAnswerChange, subje
             )
           })}
         </div>
-      ) : (subjectMode === 'maths' || subjectMode === 'chemistry') && answer && hasLatexContent(answer) ? (
+      ) : (['maths', 'chemistry', 'general'].includes(subjectMode) || !subjectMode) && answer && hasLatexContent(answer) ? (
         <div style={{ padding: '24px', minHeight: '150px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {answer.split('\n').map((line, idx) => (
             line.trim() ? (
