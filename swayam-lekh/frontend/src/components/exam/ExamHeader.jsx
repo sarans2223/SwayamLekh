@@ -1,6 +1,7 @@
 import React from 'react';
+import { HelpCircle } from 'lucide-react';
 
-export default function ExamHeader({ timeLeft = 10800, studentName, regNo }) {
+export default function ExamHeader({ timeLeft = 10800, studentName, regNo, onOpenAssistant }) {
   const formatTime = (seconds) => {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
@@ -10,7 +11,8 @@ export default function ExamHeader({ timeLeft = 10800, studentName, regNo }) {
 
   const headerStyle = {
     height: '52px', backgroundColor: '#1a3a5c', color: 'white', display: 'flex', alignItems: 'center', 
-    padding: '0 24px', fontSize: '13px', borderBottom: '1px solid #000', fontWeight: 'bold'
+    padding: '0 24px', fontSize: '13px', borderBottom: '1px solid #000', fontWeight: 'bold',
+    position: 'relative'
   };
 
   const timerStyle = {
@@ -22,10 +24,36 @@ export default function ExamHeader({ timeLeft = 10800, studentName, regNo }) {
     display: 'flex', alignItems: 'center', gap: '16px', marginLeft: 'auto'
   };
 
+  const helpButtonStyle = {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    border: '1px solid rgba(255, 255, 255, 0.2)',
+    borderRadius: '20px',
+    color: 'white',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '4px 12px',
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px'
+  };
+
   return (
     <div style={headerStyle}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
          <div style={{ padding: '4px 8px', border: '1px solid white', borderRadius: 'var(--radius)', textTransform: 'uppercase', fontSize: '11px' }}>SWAYAM LEKH</div>
+         
+         <button 
+           onClick={onOpenAssistant}
+           style={helpButtonStyle}
+           onMouseOver={e => e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.2)'}
+           onMouseOut={e => e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.1)'}
+         >
+           <HelpCircle size={14} />
+           Voice Help
+         </button>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '24px', position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>

@@ -4,15 +4,15 @@ export function useVoiceProfile() {
   const voiceProfile = null;
 
   const startSample = () => {
-    console.log("Mock start voice sample");
+    if (import.meta.env.DEV) console.log("Mock start voice sample");
   };
 
   const stopSample = () => {
-    console.log("Mock stop voice sample");
+    if (import.meta.env.DEV) console.log("Mock stop voice sample");
   };
 
   const verify = () => {
-    console.log("Mock verify voice profile");
+    if (import.meta.env.DEV) console.log("Mock verify voice profile");
     return true;
   };
 

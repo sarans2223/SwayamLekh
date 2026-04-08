@@ -4,16 +4,21 @@
  * The backend calls Groq's Whisper endpoint using the Groq API key.
  */
 
-const BACKEND_BASE_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5001').replace(/\/$/, '');
+const BACKEND_BASE_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000').replace(/\/$/, '');
 const BACKEND_STT_URL = `${BACKEND_BASE_URL}/api/stt`;
 
 /**
+<<<<<<< HEAD
  * Transcribe a microphone audio blob using the Sarvam STT backend proxy.
+=======
+ * Transcribe a microphone audio blob using Sarvam STT via Backend Proxy.
+>>>>>>> upstream
  *
  * @param {Blob} audioBlob - WebM/WAV audio blob from MediaRecorder
- * @param {string} languageCode - Language hint such as 'ta' or 'en'
+ * @param {string} languageCode - Language hint such as 'ta-IN' or 'hi-IN'
  * @returns {Promise<string>} transcript text
  */
+<<<<<<< HEAD
 export async function sarvamTranscribe(audioBlob, languageCode = 'ta-IN') {
   if (!audioBlob || !audioBlob.size) return '';
 
@@ -28,6 +33,16 @@ export async function sarvamTranscribe(audioBlob, languageCode = 'ta-IN') {
   const formData = new FormData();
   formData.append('audio', audioBlob, 'audio.webm');
   formData.append('language_code', normalizedLanguageCode);
+=======
+export async function sarvamTranscribe(audioBlob, languageCode = 'hi-IN') {
+  if (!audioBlob || !audioBlob.size) return '';
+
+  const formData = new FormData();
+  formData.append('audio', audioBlob, 'audio.webm');
+  
+  // Use correct Sarvam field names
+  formData.append('language_code', languageCode);
+>>>>>>> upstream
   formData.append('model', 'saarika:v2.5');
 
   const response = await fetch(BACKEND_STT_URL, {
@@ -37,9 +52,9 @@ export async function sarvamTranscribe(audioBlob, languageCode = 'ta-IN') {
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    throw new Error(`Groq Whisper backend error (${response.status}): ${body}`);
+    throw new Error(`Sarvam Whisper backend error (${response.status}): ${body}`);
   }
 
   const data = await response.json();
-  return (data?.transcript || '').trim();
+  return (data?.transcript || data?.text || '').trim();
 }

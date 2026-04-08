@@ -10,6 +10,8 @@ export default function QuestionSidebar({
   onJump,
   activeSectionId: controlledSectionId,
   onSectionChange,
+  videoRef,
+  activeGesture,
 }) {
   const [internalSectionId, setInternalSectionId] = useState(() => (sections[0]?.id ?? 'all'));
 
@@ -84,6 +86,22 @@ export default function QuestionSidebar({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Camera preview */}
+      <div style={{ position: 'relative', marginBottom: 12 }}>
+        <video
+          ref={videoRef}
+          style={{ width: '100%', aspectRatio: '4/3', objectFit: 'cover', borderRadius: 8, border: '2px solid var(--color-border)' }}
+          autoPlay
+          playsInline
+          muted
+        />
+        {activeGesture && (
+          <div style={{ position: 'absolute', top: 8, left: 8, backgroundColor: 'var(--amber)', color: 'black', padding: '6px 8px', borderRadius: 6, fontSize: 12 }}>
+            Command detected
+          </div>
+        )}
+        <div style={{ marginTop: 6, fontSize: 12, color: 'var(--green)' }}>Camera active</div>
+      </div>
       <h3 style={{ fontSize: '14px', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '16px', borderBottom: '1px solid #EEE', paddingBottom: '8px' }}>
         {activeSectionLabel}
       </h3>

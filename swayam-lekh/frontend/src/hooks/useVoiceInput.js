@@ -8,11 +8,11 @@ export function useVoiceInput() {
   const transcript = '';
 
   const start = () => {
-    console.log('Mock start VoiceInput');
+    if (import.meta.env.DEV) console.log('Mock start VoiceInput');
   };
 
   const stop = () => {
-    console.log('Mock stop VoiceInput');
+    if (import.meta.env.DEV) console.log('Mock stop VoiceInput');
   };
 
   const runCorrection = async (rawText, questionText, subject) => {

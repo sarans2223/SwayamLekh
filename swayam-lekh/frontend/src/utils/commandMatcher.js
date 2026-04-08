@@ -79,6 +79,8 @@ const levenshtein = (a, b) => {
   return dp[a.length][b.length];
 };
 
+const VERBOSE_COMMAND_MATCHER = false;
+
 export function isLikelyCommand(transcript) {
   const normalized = normalize(transcript);
   if (!normalized) return false;
@@ -106,7 +108,7 @@ export function matchCommand(transcript) {
       const variantWords = variantNorm.split(' ').filter(Boolean).length;
       const isCommandLikeLength = words.length <= Math.max(4, variantWords + 2);
       if (hasStandalonePhrase(normalized, variantNorm) && isCommandLikeLength) {
-        console.log(`[CommandMatcher] exact match: ${cmd.name} via "${variant}" in "${transcript}"`);
+        if (VERBOSE_COMMAND_MATCHER) console.log(`[CommandMatcher] exact match: ${cmd.name} via "${variant}" in "${transcript}"`);
         return cmd.name;
       }
     }
@@ -124,7 +126,7 @@ export function matchCommand(transcript) {
       const distance = levenshtein(normalized, variantNorm);
       const threshold = Math.floor(variantNorm.length * 0.35);
       if (distance <= threshold) {
-        console.log(`[CommandMatcher] fuzzy match: ${cmd.name} (distance ${distance} ≤ threshold ${threshold}) for "${transcript}" against "${variant}"`);
+        if (VERBOSE_COMMAND_MATCHER) console.log(`[CommandMatcher] fuzzy match: ${cmd.name} (distance ${distance} ≤ threshold ${threshold}) for "${transcript}" against "${variant}"`);
         return cmd.name;
       }
     }
