@@ -8,22 +8,21 @@ const BACKEND_BASE_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:
 const BACKEND_STT_URL = `${BACKEND_BASE_URL}/api/stt`;
 
 /**
- * Transcribe a microphone audio blob using the Groq Whisper backend.
+ * Transcribe a microphone audio blob using Sarvam STT via Backend Proxy.
  *
  * @param {Blob} audioBlob - WebM/WAV audio blob from MediaRecorder
- * @param {string} languageCode - Language hint such as 'ta' or 'en'
+ * @param {string} languageCode - Language hint such as 'ta-IN' or 'hi-IN'
  * @returns {Promise<string>} transcript text
  */
-export async function sarvamTranscribe(audioBlob, languageCode = 'ta') {
+export async function sarvamTranscribe(audioBlob, languageCode = 'hi-IN') {
   if (!audioBlob || !audioBlob.size) return '';
-
-  // Groq Whisper only accepts base ISO 639-1 codes (e.g. 'en', 'ta') — strip region suffix
-  const baseLanguage = (languageCode || 'ta').split('-')[0].toLowerCase();
 
   const formData = new FormData();
   formData.append('audio', audioBlob, 'audio.webm');
-  formData.append('language', baseLanguage);
-  formData.append('model', 'whisper-large-v3');
+  
+  // Use correct Sarvam field names
+  formData.append('language_code', languageCode);
+  formData.append('model', 'saarika:v2.5');
 
   const response = await fetch(BACKEND_STT_URL, {
     method: 'POST',
@@ -32,9 +31,9 @@ export async function sarvamTranscribe(audioBlob, languageCode = 'ta') {
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    throw new Error(`Groq Whisper backend error (${response.status}): ${body}`);
+    throw new Error(`Sarvam Whisper backend error (${response.status}): ${body}`);
   }
 
   const data = await response.json();
-  return (data?.transcript || '').trim();
+  return (data?.transcript || data?.text || '').trim();
 }

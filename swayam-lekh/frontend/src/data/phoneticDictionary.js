@@ -4,6 +4,36 @@ export const PHONETIC_DICTIONARY = {
   // VOICE COMMANDS — STT CLARIFICATION
   // ═══════════════════════════════════════════════════════
   
+  // Help command variants
+  "held": "help",
+  "health": "help",
+  "hell": "help",
+  "eld": "help",
+  "elp": "help",
+  "alpha": "help",
+  "halp": "help",
+  "help help": "help help help",
+  "help help help help": "help help help",
+  "udhavi": "help",
+  "theriyala": "help",
+  "help panunga": "help",
+  
+  // Close command variants
+  "clothes": "close",
+  "clause": "close",
+  "closet": "close",
+  "blows": "close",
+  "gloss": "close",
+  "flows": "close",
+  "close help": "close help",
+  "close assistant": "close help",
+  "exit help": "close help",
+  "stop help": "close help",
+  "close panu": "close help",
+  "close panunga": "close help",
+  "mudi": "close",
+  "moodu": "close",
+
   // Delete command variants (common STT misheard forms)
   "each": "delete",
   "each last": "delete last",

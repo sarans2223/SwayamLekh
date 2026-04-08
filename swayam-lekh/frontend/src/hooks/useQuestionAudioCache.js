@@ -1,6 +1,8 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
 import { latexToSpeakable } from '../utils/latexToSpeakable'
 
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000').replace(/\/$/, '');
+
 export function useQuestionAudioCache() {
   const audioCache = useRef({})
   const objectUrls = useRef(new Set())
@@ -25,33 +27,66 @@ export function useQuestionAudioCache() {
     }
   }, [])
 
-  async function fetchQuestionAudio(questionText, { isMaths = false } = {}) {
-    const speakableText = latexToSpeakable(questionText)
-    const response = await fetch('https://api.sarvam.ai/text-to-speech', {
+  const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+
+  async function fetchOpenAISpeak(text) {
+    const response = await fetch(`${BACKEND_URL}/api/speak`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'api-subscription-key': import.meta.env.VITE_SARVAM_API_KEY,
-      },
-      body: JSON.stringify({
-        inputs: [speakableText],
-        target_language_code: 'en-IN',
-        speaker: 'anushka',
-        pitch: 0,
-        pace: isMaths ? 0.75 : 0.85,
-        loudness: 1.5,
-        speech_sample_rate: 22050,
-        enable_preprocessing: true,
-        model: 'bulbul:v2'
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice: 'nova' })
+    });
+    if (!response.ok) throw new Error('OpenAI fallback failed');
+    const data = await response.json();
+    return data.audio;
+  }
+
+  async function fetchQuestionAudio(questionText, { isMaths = false } = {}, retryCount = 0) {
+    const speakableText = latexToSpeakable(questionText)
+    
+    // Tier 1: Sarvam
+    try {
+      const response = await fetch('https://api.sarvam.ai/text-to-speech', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'api-subscription-key': import.meta.env.VITE_SARVAM_API_KEY,
+        },
+        body: JSON.stringify({
+          inputs: [speakableText],
+          target_language_code: 'en-IN',
+          speaker: 'anushka',
+          pitch: 0,
+          pace: isMaths ? 0.75 : 0.85,
+          loudness: 1.5,
+          speech_sample_rate: 22050,
+          enable_preprocessing: true,
+          model: 'bulbul:v2'
+        })
       })
-    })
 
-    if (!response.ok) {
-      throw new Error(`Sarvam error: ${response.status}`)
+      if (response.status === 429 && retryCount < 2) {
+        const backoff = Math.pow(2, retryCount) * 1000;
+        console.warn(`Sarvam 429: Rate limited. Retrying in ${backoff}ms...`);
+        await wait(backoff);
+        return fetchQuestionAudio(questionText, { isMaths }, retryCount + 1);
+      }
+
+      if (!response.ok) {
+        throw new Error(`Sarvam error: ${response.status}`)
+      }
+
+      const data = await response.json()
+      return data.audios[0]
+    } catch (err) {
+      // Tier 2: OpenAI Fallback (only on specific errors or after retries)
+      console.warn(`Tier 1 (Sarvam) failed for question audio, trying Tier 2 (OpenAI Fallback)`);
+      try {
+        return await fetchOpenAISpeak(speakableText);
+      } catch (fallbackErr) {
+        console.error('All high-quality TTS tiers failed:', fallbackErr);
+        throw fallbackErr;
+      }
     }
-
-    const data = await response.json()
-    return data.audios[0]
   }
 
   function createQuestionAudioEntry(base64Audio) {
@@ -91,6 +126,9 @@ export function useQuestionAudioCache() {
 
     for (const question of questions) {
       try {
+        // Add a primary delay between requests to avoid hitting rate limits
+        if (loaded > 0) await wait(600); 
+
         const base64Audio = await fetchQuestionAudio(question.text, { isMaths: !!question.isMaths })
         storeQuestionAudio(question.id, base64Audio)
         loaded++
