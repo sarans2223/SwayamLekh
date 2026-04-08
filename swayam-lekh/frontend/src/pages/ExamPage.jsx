@@ -23,6 +23,7 @@ import { playSarvamTTS } from '../utils/sarvamTTS';
 import { useQuestionAudioCache } from '../hooks/useQuestionAudioCache';
 import Modal from '../components/ui/Modal';
 import { COMMANDS } from '../constants/commands';
+import CommandAssistant from '../components/exam/CommandAssistant';
 import { detectVoiceCommand } from '../utils/voiceCommandMatcher';
 import { extractQuestionParts, normalizePartAnswers, getPartAnswer, setPartAnswer } from '../utils/questionParts';
 import { MATHS_SAMPLE_QUESTIONS } from '../data/mathsSampleQuestions';
@@ -74,6 +75,7 @@ export default function ExamPage() {
   const [micError, setMicError] = useState(null);
   const [micReady, setMicReady] = useState(false); // true once exam mic stream is open
   const [showCommandList, setShowCommandList] = useState(false);
+  const [showCommandAssistant, setShowCommandAssistant] = useState(false);
   const [activeSectionId, setActiveSectionId] = useState('all');
   const [spellMode, setSpellMode] = useState(false);
   const [examStarted, setExamStarted] = useState(false);
@@ -798,9 +800,13 @@ export default function ExamPage() {
         }
 
         if (matched === 'stop' || matched === 'help') {
-          triggerAlarm();
-          noteCommand('Help requested');
-          return true;
+          // If it's the triple-repeat version, let it fall through to the alarm trigger
+          const isTriple = normalized.includes('help help help') || normalized.includes('stop stop stop');
+          if (!isTriple) {
+            setShowCommandAssistant(true);
+            noteCommand('Help requested - Opening Assistant');
+            return true;
+          }
         }
 
         if (matched === 'submit') {
@@ -1418,7 +1424,10 @@ export default function ExamPage() {
 
       // Sequential record (3 s) → Sarvam STT in-browser → process → repeat.
       const recordOneChunk = () => {
-        if (cancelled || optionCaptured || !examMicRef.current) return;
+        if (cancelled || optionCaptured || !examMicRef.current || showCommandAssistant) {
+          console.log('[ExamVoice] Recognition loop paused/halted (Assistant or other reason)');
+          return;
+        }
 
         let recorder;
         try {
@@ -1432,9 +1441,12 @@ export default function ExamPage() {
         recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
 
         recorder.onstop = async () => {
-          if (isTTSPlaying()) {
-            console.log('[ExamVoice] Ignoring chunk - TTS is playing');
-            if (!cancelled && !optionCaptured) recordOneChunk();
+          if (isTTSPlaying() || showCommandAssistant) {
+            console.log('[ExamVoice] Ignoring chunk - TTS playing or Assistant open. HIFI recognition loop halted.');
+            // Only recurse if it's JUST TTS, if assistant is open we rely on useEffect rerun to resume
+            if (isTTSPlaying() && !showCommandAssistant && !cancelled && !optionCaptured) {
+               recordOneChunk();
+            }
             return;
           }
           optionRecognitionRef.current = null;
@@ -1537,6 +1549,7 @@ export default function ExamPage() {
     spellMode,
     examStarted,
     prevQuestion,
+    showCommandAssistant,
   ]);
 
   if (!examStarted) {
@@ -1599,6 +1612,7 @@ export default function ExamPage() {
           isCritical={isCritical}
           studentName={student.name}
           regNo={student.registerNo}
+          onOpenAssistant={() => setShowCommandAssistant(true)}
         />
       </div>
 
@@ -1733,11 +1747,18 @@ export default function ExamPage() {
       {/* ── MALPRACTICE MODAL — only closes with code 12345 ── */}
       {malpractice && (
         <MalpracticeModal
-          similarityScore={malpractice.score}
-          detectedAt={malpractice.at}
+          isOpen={!!malpractice}
+          evidence={malpractice}
           onClose={() => setMalpractice(null)}
         />
       )}
+
+      <CommandAssistant
+        isOpen={showCommandAssistant}
+        onClose={() => setShowCommandAssistant(false)}
+        studentLang={student?.instructionLang}
+        micStream={examMicRef.current}
+      />
 
       {/* ── Math Renderer Modal (for Maths Mode) ── */}
       <Modal

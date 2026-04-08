@@ -98,6 +98,7 @@ export const MATH_PATTERNS = [
   // ── POWERS AND ROOTS ───────────────────────────────────
 
   // "x to the power n minus 1" → x^{n-1}
+
   {
     pattern: /(.+?) to the power (.+?) minus (.+)/gi,
     replacement: (m, base, exp, sub) => `${base}^{${exp}-${sub}}`
@@ -211,9 +212,13 @@ export const MATH_PATTERNS = [
 
   { pattern: /\bplus or minus\b/gi, replacement: '\\pm' },
   { pattern: /\bminus or plus\b/gi, replacement: '\\mp' },
+  { pattern: /\bplus\b/gi, replacement: '+' },
+  { pattern: /\bminus\b/gi, replacement: '-' },
   { pattern: /\bmultiplied by\b/gi, replacement: '\\times' },
+  { pattern: /\bmultiplied\b/gi, replacement: '\\times' },
   { pattern: /\btimes\b/gi, replacement: '\\times' },
   { pattern: /\bdivided by\b/gi, replacement: '\\div' },
+  { pattern: /\bdivided\b/gi, replacement: '\\div' },
   { pattern: /\bnot equal\b/gi, replacement: '\\neq' },
   { pattern: /\bgreater than or equal\b/gi, replacement: '\\geq' },
   { pattern: /\bless than or equal\b/gi, replacement: '\\leq' },
