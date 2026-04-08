@@ -11,6 +11,26 @@ export function useWhisper({ lang = 'en-IN', onTranscript, onCommand, continuous
   const recognitionRef = useRef(null);
   const onTranscriptRef = useRef(onTranscript);
   const onCommandRef = useRef(onCommand);
+  const LOG_DETECTED_SPEECH = true;
+  const lastFinalRef = useRef('');
+  const lastFinalTsRef = useRef(0);
+  const retryCountRef = useRef(0);
+  const restartTimerRef = useRef(null);
+  const userStoppedRef = useRef(false);
+
+  const normalizeTranscript = (txt = '') => {
+    return (txt || '')
+      .replace(/\s+/g, ' ')
+      .replace(/^[:\-\s]+|[:\-\s]+$/g, '')
+      .trim();
+  };
+
+  const isMeaningful = (txt = '') => {
+    const t = normalizeTranscript(txt);
+    if (!t) return false;
+    if (t.length < 2) return false;
+    return /[\p{L}\p{N}]/u.test(t); // has letter or number
+  };
 
   useEffect(() => {
     onTranscriptRef.current = onTranscript;
@@ -34,10 +54,27 @@ export function useWhisper({ lang = 'en-IN', onTranscript, onCommand, continuous
     recognition.continuous = continuous;
     recognition.interimResults = true;
 
-    recognition.onstart = () => setListening(true);
+    recognition.onstart = () => {
+      userStoppedRef.current = false;
+      retryCountRef.current = 0;
+      setListening(true);
+    };
+
     recognition.onend = () => {
       setListening(false);
       recognitionRef.current = null;
+      // If continuous mode and user didn't explicitly stop, attempt a gentle restart
+      if (continuous && !userStoppedRef.current) {
+        const retry = Math.min(3, Math.max(0, retryCountRef.current || 0));
+        const backoff = Math.pow(2, retry) * 500; // 500ms, 1000ms, 2000ms
+        restartTimerRef.current = setTimeout(() => {
+          retryCountRef.current = (retryCountRef.current || 0) + 1;
+          try {
+            // Only restart if no recognizer currently running
+            if (!recognitionRef.current) start();
+          } catch (_) { /* ignore restart error */ }
+        }, backoff);
+      }
     };
 
     recognition.onresult = (event) => {
@@ -51,18 +88,70 @@ export function useWhisper({ lang = 'en-IN', onTranscript, onCommand, continuous
           interimText += result[0].transcript;
         }
       }
+
       const combined = finalText || interimText;
       setTranscript(combined);
-      if (finalText && onTranscriptRef.current) onTranscriptRef.current(finalText.trim());
-      if (onCommandRef.current) onCommandRef.current(combined.trim().toUpperCase());
+
+      // Only announce final transcripts in the exam voice format to avoid duplicates
+      if (finalText) {
+        const cleaned = normalizeTranscript(finalText);
+
+        // Debounce duplicates that happen immediately after one another
+        const now = Date.now();
+        if (isMeaningful(cleaned)) {
+          if (cleaned !== lastFinalRef.current || (now - lastFinalTsRef.current) > 1200) {
+            lastFinalRef.current = cleaned;
+            lastFinalTsRef.current = now;
+            if (LOG_DETECTED_SPEECH) console.log('[[examvoice]]: heared :', cleaned);
+            if (onTranscriptRef.current) onTranscriptRef.current(cleaned);
+          } else {
+            // duplicate final within short window — ignore
+          }
+        }
+      } else if (interimText) {
+        // Keep interim logging as debug only (not the examvoice line)
+        if (LOG_DETECTED_SPEECH) {
+          const c = normalizeTranscript(interimText);
+          if (isMeaningful(c)) console.debug('[useWhisper] interim:', c);
+        }
+        // do not call onCommand for interim to avoid duplicate handling
+      }
     };
 
     recognition.onerror = (event) => {
-      if (event.error !== 'aborted') {
-        console.error('SpeechRecognition error:', event.error);
+      // Ignore 'aborted' which occurs when we intentionally stop recognition
+      if (event.error === 'aborted') {
+        if (LOG_DETECTED_SPEECH) console.debug('[useWhisper] SpeechRecognition aborted (ignored)');
+        recognitionRef.current = null;
+        setListening(false);
+        return;
       }
+
+      // Suppress noisy 'no-speech' errors; log others based on debug flag
+      if (event.error === 'no-speech') {
+        if (LOG_DETECTED_SPEECH) console.debug('[useWhisper] SpeechRecognition no-speech (ignored)');
+      } else if (event.error === 'network') {
+        // Transient network error from the speech service — quiet debug log and allow restart
+        if (LOG_DETECTED_SPEECH) console.debug('[useWhisper] SpeechRecognition network error (will retry):', event.error);
+      } else if (event.error === 'service-not-allowed') {
+        // Permissions/service critical: warn the user
+        console.warn('[useWhisper] SpeechRecognition warning:', event.error);
+      } else {
+        if (LOG_DETECTED_SPEECH) console.error('[useWhisper] SpeechRecognition error:', event.error);
+      }
+
       setListening(false);
       recognitionRef.current = null;
+
+      // On transient errors, attempt restart if continuous and user didn't stop
+      if (continuous && !userStoppedRef.current) {
+        const retry = Math.min(3, (retryCountRef.current || 0));
+        const backoff = Math.pow(2, retry) * 500;
+        restartTimerRef.current = setTimeout(() => {
+          retryCountRef.current = (retryCountRef.current || 0) + 1;
+          try { if (!recognitionRef.current) start(); } catch (_) { }
+        }, backoff);
+      }
     };
 
     recognitionRef.current = recognition;
@@ -74,7 +163,14 @@ export function useWhisper({ lang = 'en-IN', onTranscript, onCommand, continuous
       recognitionRef.current.stop();
       recognitionRef.current = null;
     }
+    // Mark that the user requested stop so auto-restarts don't occur
+    userStoppedRef.current = true;
     setListening(false);
+    retryCountRef.current = 0;
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
   }, []);
 
   return { listening, transcript, start, stop, supported: !!SpeechRecognition };

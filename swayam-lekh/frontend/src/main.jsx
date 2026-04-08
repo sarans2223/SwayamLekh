@@ -8,7 +8,7 @@ import './styles/globals.css';
 import './styles/animations.css';
 import 'katex/dist/katex.min.css';
 
-console.log("Main entry point loaded.");
+if (import.meta.env.DEV) console.log("Main entry point loaded.");
 
 try {
   const rootElement = document.getElementById('root');
@@ -19,7 +19,7 @@ try {
       <App />
     </BrowserRouter>,
   );
-  console.log("React render command executed successfully.");
+  if (import.meta.env.DEV) console.log("React render command executed successfully.");
 } catch (error) {
   console.error("CRITICAL BROWSER ERROR:", error);
 }

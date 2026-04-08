@@ -4,7 +4,7 @@
  * The backend calls Groq's Whisper endpoint using the Groq API key.
  */
 
-const BACKEND_BASE_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5001').replace(/\/$/, '');
+const BACKEND_BASE_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000').replace(/\/$/, '');
 const BACKEND_STT_URL = `${BACKEND_BASE_URL}/api/stt`;
 
 /**

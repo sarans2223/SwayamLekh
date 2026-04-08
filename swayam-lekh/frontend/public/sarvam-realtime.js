@@ -6,7 +6,6 @@ const constraints = {
     autoGainControl: true,
   },
 };
-
 const LOW_VOLUME_THRESHOLD = 0.011;
 const NOISE_ALERT_THRESHOLD = 0.08;
 const MAX_SEGMENT_MS = 1400;
@@ -286,7 +285,7 @@ async function callSarvamStt(blob, language) {
   const formData = new FormData();
   formData.append('audio', blob, 'speech.wav');
   formData.append('language_code', language);
-  formData.append('model', 'saarika:v2.5');
+  formData.append('model', 'whisper-large-v3');
 
   const response = await fetch(`${BACKEND_URL}/sarvam-stt`, {
     method: 'POST',

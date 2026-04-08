@@ -9,6 +9,8 @@
 import { extractFeatures, compareFeatures } from './audioFingerprint';
 import { getVoiceProfiles, logMalpractice }  from '../services/supabaseClient';
 
+const VERBOSE_VOICE_MONITOR = false;
+
 const WINDOW_MS          = 1000;  // 1-second audio window
 const MIN_VOICE_ENERGY   = 0.015; // Increased Voice Activity Detection (VAD) threshold
 const CONFIDENCE_THRESH  = 85.0;  // 85% confidence required to trigger alarm
@@ -48,7 +50,7 @@ export async function startVoiceMonitoring(registerNo, studentName, onMismatch) 
   _onMismatch = onMismatch;
   running     = true;
 
-  console.log('[VoiceMonitor] Starting — live continuous monitoring');
+  if (VERBOSE_VOICE_MONITOR) console.log('[VoiceMonitor] Starting — live continuous monitoring');
 
   // Only open our own stream if ExamPage hasn't handed one over
   if (!micStream) {
@@ -78,7 +80,7 @@ export function stopVoiceMonitoring() {
   }
   micStream   = null;
   _ownsStream = false;
-  console.log('[VoiceMonitor] Stopped.');
+  if (VERBOSE_VOICE_MONITOR) console.log('[VoiceMonitor] Stopped.');
 }
 
 // ─── Internal ─────────────────────────────────────────────────────────────────
@@ -128,14 +130,14 @@ async function liveMonitorLoop() {
       // Requires at least a minimum base energy, or 20% of the normal speaking volume
       const dynamicEnergyThreshold = Math.max(MIN_VOICE_ENERGY, currentBaseline.energy_mean * 0.2);
       if (liveFeatures.energy_mean < dynamicEnergyThreshold) {
-        console.log('[VoiceMonitor] SILENCE detected. Continuing...');
+        if (VERBOSE_VOICE_MONITOR) console.log('[VoiceMonitor] SILENCE detected. Continuing...');
         continue;
       }
       
       // Simple heuristic for non-human noise vs human speech (using ZCR/Pitch)
       // Human pitch is typically 60-500Hz. Background hums or clatter fall outside or have high ZCR.
       if (liveFeatures.pitch_mean < 60 || liveFeatures.pitch_mean > 500 || liveFeatures.zcr > 0.35) {
-        console.log(`[VoiceMonitor] NOISE detected (Pitch: ${liveFeatures.pitch_mean.toFixed(1)}, ZCR: ${liveFeatures.zcr.toFixed(3)}). Continuing...`);
+        if (VERBOSE_VOICE_MONITOR) console.log(`[VoiceMonitor] NOISE detected (Pitch: ${liveFeatures.pitch_mean.toFixed(1)}, ZCR: ${liveFeatures.zcr.toFixed(3)}). Continuing...`);
         continue;
       }
 
@@ -176,7 +178,7 @@ async function liveMonitorLoop() {
         // ✅ CANDIDATE CONFIRMED
         // Check if we need to recalibrate baseline (every 15 mins)
         if (Date.now() - lastRecalibration > RECAL_INTERVAL_MS) {
-          console.log('[VoiceMonitor] Recalibrating baseline...');
+          if (VERBOSE_VOICE_MONITOR) console.log('[VoiceMonitor] Recalibrating baseline...');
           updateBaseline(liveFeatures);
           lastRecalibration = Date.now();
         }

@@ -125,6 +125,13 @@ export const playSarvamTTS = async (text, languageCode = 'en-IN') => {
                         return;
                     }
                     console.error('[SarvamTTS] Audio play rejected:', err);
+                    console.warn('[SarvamTTS] Falling back to browser TTS due to play() rejection');
+                    try {
+                        // attempt browser TTS fallback
+                        speakWithBrowserTTS(text, languageCode);
+                    } catch (fallbackErr) {
+                        console.error('[SarvamTTS] Browser TTS fallback failed:', fallbackErr);
+                    }
                 });
             }
             return audio;
