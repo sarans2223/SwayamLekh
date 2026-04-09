@@ -1,12 +1,21 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStudent } from '../context/StudentContext';
+import { useExam } from '../context/ExamContext';
+import { sarvamTranscribe } from '../utils/sarvamSTT';
+import { playSarvamTTS } from '../utils/sarvamTTS';
+import { formatTimeToSpeech } from '../utils/formatters';
+import { detectVoiceCommand } from '../utils/voiceCommandMatcher';
 
 export default function InstructionsPage() {
     const navigate = useNavigate();
     const { student } = useStudent();
+    const { state, startExamTimer } = useExam();
     const audioRef = useRef(null);
     const [audioError, setAudioError] = useState(false);
+    const [isListening, setIsListening] = useState(false);
+    const srRef = useRef(null);
+    const deadRef = useRef(false);
 
     useEffect(() => {
         const audio = new Audio('/audio/instruction_voice.mp3');
@@ -29,11 +38,116 @@ export default function InstructionsPage() {
         });
 
         return () => {
+            deadRef.current = true;
+            if (srRef.current) {
+                try { srRef.current.stop(); } catch (e) {}
+            }
             audio.removeEventListener('ended', handleEnded);
             audio.removeEventListener('error', handleError);
             audio.pause();
         };
     }, [navigate, student?.subjectMode]);
+
+    const getAssistantIntent = async (transcript, context = []) => {
+        try {
+            const resp = await fetch('http://localhost:5000/api/intent', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ transcript, context }),
+            });
+            if (!resp.ok) return '';
+            const data = await resp.json();
+            return data.response || '';
+        } catch (err) {
+            console.error('[intent] AI response failed:', err);
+            return '';
+        }
+    };
+
+    const speakText = async (text) => {
+        const langCode = student?.instructionLang === 'ta' ? 'ta-IN' : 'en-IN';
+        try {
+            const audio = await playSarvamTTS(text, langCode);
+            return audio;
+        } catch (e) {
+            console.error('Sarvam TTS failed', e);
+            return null;
+        }
+    };
+
+    const handleVoiceCommand = async (transcript) => {
+        const normalized = transcript.toLowerCase().trim();
+        const matched = detectVoiceCommand(normalized);
+
+        if (matched === 'time left') {
+            const intent = await getAssistantIntent(normalized);
+            
+            if (intent.includes('[GET_TIME]')) {
+                const seconds = state.timeLeft;
+                const naturalSentence = await getAssistantIntent(`System message: ${seconds} seconds`);
+                if (naturalSentence) {
+                    const wasPlaying = audioRef.current && !audioRef.current.paused;
+                    if (wasPlaying) audioRef.current.pause();
+
+                    const audio = await speakText(naturalSentence);
+                    if (audio) {
+                        audio.onended = () => {
+                            if (wasPlaying && !deadRef.current) audioRef.current.play().catch(() => {});
+                        };
+                    } else {
+                        if (wasPlaying && !deadRef.current) audioRef.current.play().catch(() => {});
+                    }
+                } else {
+                    const lang = student?.instructionLang === 'ta' ? 'ta' : 'en';
+                    await speakText(formatTimeToSpeech(seconds, lang));
+                }
+            } else if (intent) {
+                await speakText(intent);
+            }
+            return true;
+        }
+
+        if (normalized.includes('proceed') || normalized.includes('skip') || normalized.includes('next')) {
+            navigate('/voice-setup', { state: { subjectMode: student?.subjectMode } });
+            return true;
+        }
+        return false;
+    };
+
+    useEffect(() => {
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR) return;
+
+        const startSR = () => {
+             if (deadRef.current) return;
+             const sr = new SR();
+             sr.lang = student?.instructionLang === 'ta' ? 'ta-IN' : 'en-IN';
+             sr.continuous = false;
+             sr.interimResults = false;
+
+             sr.onresult = (e) => {
+                 const transcript = e.results[0][0].transcript;
+                 handleVoiceCommand(transcript);
+             };
+
+             sr.onend = () => {
+                 if (!deadRef.current) setTimeout(startSR, 1000);
+             };
+
+             srRef.current = sr;
+             try { sr.start(); } catch (e) {}
+        };
+
+        startSR();
+        setIsListening(true);
+
+        return () => {
+            deadRef.current = true;
+            if (srRef.current) {
+                try { srRef.current.stop(); } catch (e) {}
+            }
+        };
+    }, [student?.instructionLang]);
 
     if (audioError) {
         return (

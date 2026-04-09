@@ -1,5 +1,4 @@
 import React from 'react';
-import { useExamTimer } from '../../hooks/useExamTimer';
 import { Clock } from 'lucide-react';
 
 export default function ExamTimer({ timeRemaining, isWarning, isCritical }) {

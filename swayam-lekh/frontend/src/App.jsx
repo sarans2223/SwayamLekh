@@ -9,6 +9,8 @@ import ExamPage from './pages/ExamPage';
 import FinishPage from './pages/FinishPage';
 import VoiceSetupPage from './pages/VoiceSetupPage';
 import MathsExamQuickPage from './pages/MathsExamQuickPage';
+import ChemistryExamQuickPage from './pages/ChemistryExamQuickPage';
+import MathScribeDemo from './pages/MathScribeDemo';
 import ProctorDashboard from './pages/ProctorDashboard';
 
 function App() {
@@ -22,6 +24,8 @@ function App() {
             <Route path="/voice-setup" element={<VoiceSetupPage />} />
             <Route path="/exam" element={<ExamPage />} />
             <Route path="/exam-maths" element={<MathsExamQuickPage />} />
+            <Route path="/exam-chemistry" element={<ChemistryExamQuickPage />} />
+            <Route path="/math-scribe" element={<MathScribeDemo />} />
             <Route path="/proctor" element={<ProctorDashboard />} />
             <Route path="/finish" element={<FinishPage />} />
           </Routes>
