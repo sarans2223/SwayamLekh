@@ -11,8 +11,48 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 const groqClient = new OpenAI({ apiKey: process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY });
 
 // STT via frontend; keep endpoint stubbed
-router.post('/stt', upload.single('audio'), (req, res) => {
-	return res.status(503).json({ error: 'Server STT disabled; frontend handles STT directly.' });
+router.post('/stt', upload.single('audio'), async (req, res) => {
+	// return res.status(503).json({ error: 'Server STT disabled; frontend handles STT directly.' });
+
+	// Enable Sarvam STT proxy
+	if (!req.file) {
+		return res.status(400).json({ error: 'Missing audio file.' });
+	}
+
+	const apiKey = process.env.SARVAM_API_KEY || process.env.VITE_SARVAM_API_KEY || '';
+	if (!apiKey) {
+		return res.status(500).json({ error: 'Missing SARVAM_API_KEY.' });
+	}
+
+	const languageCode = req.body.language_code || 'en-IN';
+	const model = req.body.model || 'saarika:v2.5';
+
+	try {
+		const formData = new FormData();
+		const audioBlob = new Blob([req.file.buffer], { type: 'audio/webm' });
+		formData.append('file', audioBlob, 'speech.webm');
+		formData.append('language_code', languageCode);
+		formData.append('model', model);
+
+		const response = await fetch('https://api.sarvam.ai/speech-to-text', {
+			method: 'POST',
+			headers: { 'api-subscription-key': apiKey },
+			body: formData,
+		});
+
+		const payload = await response.text();
+		if (!response.ok) {
+			return res.status(response.status).json({ error: 'Sarvam STT request failed.', details: payload });
+		}
+
+		const data = JSON.parse(payload || '{}');
+		return res.json({
+			transcript: (data.transcript || '').trim(),
+		});
+	} catch (error) {
+		console.error('[STT Proxy] Error', error);
+		return res.status(500).json({ error: 'STT proxy error', details: error?.message || String(error) });
+	}
 });
 
 async function runGroqHealthCheck() {

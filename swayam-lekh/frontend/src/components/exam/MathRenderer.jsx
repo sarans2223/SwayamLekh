@@ -4,31 +4,44 @@ import 'katex/dist/katex.min.css';
 import { Volume2, Trash2 } from 'lucide-react';
 import { playSarvamTTS } from '../../utils/sarvamTTS';
 
-export default function MathRenderer({ latex, onClear }) {
+export default function MathRenderer({
+  latex,
+  onClear,
+  inline = false,
+  className = '',
+  style = {}
+}) {
   // Memoize the rendered HTML to avoid recomputation
   const renderedHtml = useMemo(() => {
-    if (!latex) return null;
+    if (!latex || !latex.trim()) return null;
+
+    // Strip surrounding $ or $$ if present
+    const cleanLatex = latex.trim().replace(/^(\$\$?)/, '').replace(/(\$\$?)$/, '');
 
     try {
-      const html = katex.renderToString(latex, {
-        displayMode: true,
+      const html = katex.renderToString(cleanLatex, {
+        displayMode: !inline,
         throwOnError: false,
         output: 'html',
+        strict: false,
+        trust: true,
       });
       return html;
     } catch (err) {
       console.error('KaTeX render error:', err);
       return null;
     }
-  }, [latex]);
+  }, [latex, inline]);
 
   const handleReadMath = async () => {
     if (!latex) return;
 
-    // Convert LaTeX to plain English description for TTS
-    // This is a simple conversion; you can enhance it further
-    const englishDescription = latexToEnglish(latex);
+    // Strip surrounding $ or $$ if present for TTS
+    const cleanLatex = latex.trim().replace(/^(\$\$?)/, '').replace(/(\$\$?)$/, '');
     
+    // Convert LaTeX to plain English description for TTS
+    const englishDescription = latexToEnglish(cleanLatex);
+
     try {
       await playSarvamTTS(englishDescription, 'en-IN');
     } catch (err) {
@@ -42,188 +55,131 @@ export default function MathRenderer({ latex, onClear }) {
     }
   };
 
-  if (!latex) {
+  if (!latex || !renderedHtml) {
     return (
       <div
+        className={`math-renderer-empty ${className}`}
         style={{
           padding: '20px',
           borderRadius: '8px',
-          backgroundColor: '#f5f5f5',
-          border: '2px dashed #ccc',
-          color: '#666',
+          border: '2px dashed var(--border)',
           textAlign: 'center',
+          color: 'var(--text-secondary)',
           fontStyle: 'italic',
+          ...style,
         }}
       >
-        📝 Speak your equation...
+        No math expression to display
       </div>
     );
   }
 
+  const containerStyle = {
+    position: 'relative',
+    padding: inline ? '4px 8px' : '16px',
+    borderRadius: '8px',
+    border: '1px solid var(--border)',
+    backgroundColor: 'var(--background)',
+    margin: inline ? '0' : '8px 0',
+    overflowX: 'auto',
+    textAlign: inline ? 'inherit' : 'center',
+    ...style,
+  };
+
+  const mathStyle = {
+    fontSize: inline ? '1em' : '1.2em',
+    lineHeight: inline ? '1.2' : '1.5',
+  };
+
   return (
-    <div
-      style={{
-        padding: '16px',
-        borderRadius: '8px',
-        backgroundColor: '#f9f9f9',
-        border: '1px solid #e0e0e0',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-      }}
-    >
-      {/* Rendered Math */}
-      {renderedHtml ? (
-        <div
-          style={{
-            padding: '16px',
-            backgroundColor: '#fff',
-            borderRadius: '6px',
-            marginBottom: '12px',
-            minHeight: '60px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-          dangerouslySetInnerHTML={{ __html: renderedHtml }}
-        />
-      ) : (
-        <div
-          style={{
-            padding: '16px',
-            backgroundColor: '#fff',
-            borderRadius: '6px',
-            marginBottom: '12px',
-            minHeight: '60px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#999',
-            fontSize: '14px',
-          }}
-        >
-          (Could not render equation)
-        </div>
-      )}
-
-      {/* Raw LaTeX */}
+    <div className={`math-renderer ${className}`} style={containerStyle}>
+      {/* Control buttons */}
       <div
         style={{
-          padding: '8px 12px',
-          backgroundColor: '#f5f5f5',
-          borderRadius: '4px',
-          fontFamily: 'Monaco, monospace',
-          fontSize: '12px',
-          color: '#666',
-          marginBottom: '12px',
-          wordBreak: 'break-all',
-          overflowX: 'auto',
-        }}
-      >
-        <span style={{ fontWeight: '500', color: '#555' }}>LaTeX:</span> {latex}
-      </div>
-
-      {/* Buttons */}
-      <div
-        style={{
+          position: 'absolute',
+          top: '8px',
+          right: '8px',
           display: 'flex',
-          gap: '8px',
-          justifyContent: 'flex-end',
+          gap: '4px',
+          opacity: 0.7,
         }}
       >
         <button
           onClick={handleReadMath}
           style={{
-            padding: '8px 16px',
-            borderRadius: '6px',
-            border: '1px solid #2196F3',
-            backgroundColor: '#fff',
-            color: '#2196F3',
+            padding: '4px',
+            border: 'none',
+            borderRadius: '4px',
+            background: 'var(--primary)',
+            color: 'white',
             cursor: 'pointer',
-            fontSize: '14px',
-            fontWeight: '500',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            transition: 'all 0.2s',
+            fontSize: '12px',
           }}
-          onMouseEnter={(e) => {
-            e.currentTarget.backgroundColor = '#e3f2fd';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.backgroundColor = '#fff';
-          }}
+          title="Read math aloud"
         >
-          <Volume2 size={16} />
-          READ MATH
+          <Volume2 size={14} />
         </button>
-
-        <button
-          onClick={handleClear}
-          style={{
-            padding: '8px 16px',
-            borderRadius: '6px',
-            border: '1px solid #f44336',
-            backgroundColor: '#fff',
-            color: '#f44336',
-            cursor: 'pointer',
-            fontSize: '14px',
-            fontWeight: '500',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            transition: 'all 0.2s',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.backgroundColor = '#ffebee';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.backgroundColor = '#fff';
-          }}
-        >
-          <Trash2 size={16} />
-          CLEAR MATH
-        </button>
+        {onClear && (
+          <button
+            onClick={handleClear}
+            style={{
+              padding: '4px',
+              border: 'none',
+              borderRadius: '4px',
+              background: 'var(--red)',
+              color: 'white',
+              cursor: 'pointer',
+              fontSize: '12px',
+            }}
+            title="Clear expression"
+          >
+            <Trash2 size={14} />
+          </button>
+        )}
       </div>
+
+      {/* Rendered math */}
+      <div
+        style={mathStyle}
+        dangerouslySetInnerHTML={{ __html: renderedHtml }}
+      />
     </div>
   );
 }
 
-/**
- * Simple converter from LaTeX to plain English description for TTS
- * Can be enhanced further based on patterns
- */
+// Simple LaTeX to English converter for TTS
 function latexToEnglish(latex) {
   if (!latex) return '';
 
   let text = latex;
 
-  // Remove LaTeX commands and convert to readable English
-  text = text
-    .replace(/\\frac\{([^}]*)\}\{([^}]*)\}/g, '($1) over ($2)')
-    .replace(/\^(\{[^}]*\}|\S)/g, 'to the power $1')
-    .replace(/\^\{([^}]*)\}/g, 'to the power $1')
-    .replace(/_\{([^}]*)\}/g, 'subscript $1')
-    .replace(/\\sqrt\[([^\]]*)\]\{([^}]*)\}/g, '$1 root of $2')
-    .replace(/\\sqrt\{([^}]*)\}/g, 'square root of $1')
-    .replace(/\\sin/g, 'sine')
-    .replace(/\\cos/g, 'cosine')
-    .replace(/\\tan/g, 'tangent')
-    .replace(/\\int/g, 'integral')
-    .replace(/\\sum/g, 'sum')
-    .replace(/\\prod/g, 'product')
-    .replace(/\\lim/g, 'limit')
-    .replace(/\\infty/g, 'infinity')
-    .replace(/\\pi/g, 'pi')
-    .replace(/\\alpha/g, 'alpha')
-    .replace(/\\beta/g, 'beta')
-    .replace(/\\theta/g, 'theta')
-    .replace(/\\to/g, 'to')
-    .replace(/\\times/g, 'times')
-    .replace(/\\div/g, 'divided by')
-    .replace(/\\neq/g, 'not equal to')
-    .replace(/\\leq/g, 'less than or equal to')
-    .replace(/\\geq/g, 'greater than or equal to')
-    .replace(/\\\\/g, ' ')
-    .replace(/[{}\\]/g, '');
+  // Basic conversions for common symbols
+  const conversions = [
+    { pattern: /\\alpha/g, replacement: 'alpha' },
+    { pattern: /\\beta/g, replacement: 'beta' },
+    { pattern: /\\gamma/g, replacement: 'gamma' },
+    { pattern: /\\delta/g, replacement: 'delta' },
+    { pattern: /\\theta/g, replacement: 'theta' },
+    { pattern: /\\lambda/g, replacement: 'lambda' },
+    { pattern: /\\pi/g, replacement: 'pi' },
+    { pattern: /\\sigma/g, replacement: 'sigma' },
+    { pattern: /\\times/g, replacement: 'times' },
+    { pattern: /\\div/g, replacement: 'divided by' },
+    { pattern: /\\frac\{([^}]+)\}\{([^}]+)\}/g, replacement: '$1 over $2' },
+    { pattern: /\\sqrt\{([^}]+)\}/g, replacement: 'square root of $1' },
+    { pattern: /\\int\s+(.+?)\s+\\,\s+d(\w+)/g, replacement: 'integral of $1 with respect to $2' },
+    { pattern: /\^\{([^}]+)\}/g, replacement: ' to the power $1' },
+    { pattern: /\^(\d+)/g, replacement: ' to the power $1' },
+    { pattern: /\{([^}]+)\}/g, replacement: '$1' },
+    { pattern: /\\,/g, replacement: ' ' },
+  ];
 
-  return text || latex;
+  conversions.forEach(({ pattern, replacement }) => {
+    text = text.replace(pattern, replacement);
+  });
+
+  // Clean up extra spaces
+  text = text.replace(/\s+/g, ' ').trim();
+
+  return text;
 }

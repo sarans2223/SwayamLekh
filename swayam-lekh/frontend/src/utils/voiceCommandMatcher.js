@@ -34,6 +34,7 @@ const COMMAND_HINTS = {
   'skip skip': ['skip skip', 'skipskip'],
   start: ['start', 'staart', 'tart', 'estart', 'istart', 'estaan', 'estaat'],
   'go to': ['go to', 'goto', 'go two', 'go-to', 'gotu', 'gato'],
+  'time left': ['time left', 'remaining time', 'how much time', 'test time', 'exam time', 'time remaining', 'what is the time'],
 };
 
 function countWordOccurrences(normalized, targetWords) {

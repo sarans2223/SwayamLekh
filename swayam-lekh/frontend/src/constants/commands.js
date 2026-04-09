@@ -57,7 +57,14 @@ export const COMMANDS = [
     category: "COMMAND_MODE",
   },
   {
+    command: "TIME LEFT",
+    audioFile: null,
+    description: "Announces the remaining exam time.",
+    category: "COMMAND_MODE",
+  },
+  {
     command: "CORRECT [WRONG] TO [RIGHT]",
+
     audioFile: null,
     description: "Replace first occurrence of a word in your answer. E.g. 'correct newton to neutron'.",
     category: "COMMAND_MODE",

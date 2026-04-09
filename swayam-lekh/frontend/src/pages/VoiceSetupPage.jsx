@@ -1,8 +1,12 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useStudent } from '../context/StudentContext';
+import { useExam } from '../context/ExamContext';
 import { saveVoiceProfile } from '../services/supabaseClient';
 import { countApproxCommandOccurrences } from '../utils/voiceCommandDetection';
+import { detectVoiceCommand } from '../utils/voiceCommandMatcher';
+import { formatTimeToSpeech } from '../utils/formatters';
+import { playSarvamTTS } from '../utils/sarvamTTS';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const VISUALIZER_BARS = 32;
@@ -31,6 +35,7 @@ export default function VoiceSetupPage() {
   const navigate    = useNavigate();
   const location    = useLocation();
   const { student } = useStudent();
+  const { state }   = useExam();
 
   const lang          = location.state?.lang || student?.instructionLang || 'en';
   const subjectMode   = location.state?.subjectMode || student?.subjectMode || 'normal';
@@ -251,7 +256,34 @@ export default function VoiceSetupPage() {
       console.log('[SR] onstart - speech recognition started');
     };
 
-    sr.onresult = (e) => {
+    const getAssistantIntent = async (transcript, context = []) => {
+        try {
+            const resp = await fetch('http://localhost:5000/api/intent', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ transcript, context }),
+            });
+            if (!resp.ok) return '';
+            const data = await resp.json();
+            return data.response || '';
+        } catch (err) {
+            console.error('[intent] AI response failed:', err);
+            return '';
+        }
+    };
+
+    const speakStatus = async (text) => {
+        const langCode = lang === 'ta' ? 'ta-IN' : 'en-IN';
+        try {
+            const audio = await playSarvamTTS(text, langCode);
+            return audio;
+        } catch (e) {
+            console.error('Sarvam TTS failed', e);
+            return null;
+        }
+    };
+
+    sr.onresult = async (e) => {
       if (dead.current) return;
       const transcript = Array.from(e.results).map((r) => r[0].transcript).join(' ');
       const recentTranscript = transcript
@@ -262,6 +294,36 @@ export default function VoiceSetupPage() {
         .split(' ')
         .slice(-12)
         .join(' ');
+      
+      const matched = detectVoiceCommand(recentTranscript);
+      if (matched === 'time left') {
+          const intent = await getAssistantIntent(recentTranscript);
+          
+          if (intent.includes('[GET_TIME]')) {
+              const seconds = state.timeLeft;
+              const naturalSentence = await getAssistantIntent(`System message: ${seconds} seconds`);
+              
+              if (naturalSentence) {
+                  // Pause existing audio if any
+                  if (currentAudioRef.current && !currentAudioRef.current.paused) {
+                      currentAudioRef.current.pause();
+                  }
+                  
+                  const audio = await speakStatus(naturalSentence);
+                  if (audio) {
+                      audio.onended = () => {
+                          if (currentAudioRef.current && !dead.current) currentAudioRef.current.play().catch(() => {});
+                      };
+                  } else {
+                      if (currentAudioRef.current && !dead.current) currentAudioRef.current.play().catch(() => {});
+                  }
+              }
+          } else if (intent) {
+              await speakStatus(intent);
+          }
+          return;
+      }
+
       const isFinal = Array.from(e.results).map((r) => r.isFinal);
       console.log('[SR] onresult:', { transcript: recentTranscript, isFinal: isFinal[isFinal.length - 1], resultsCount: e.results.length });
       setLastTranscript(recentTranscript);
@@ -284,23 +346,41 @@ export default function VoiceSetupPage() {
 
     sr.onerror = (e) => {
       console.error('[SR] onerror:', e.error);
-      if (e.error === 'not-allowed') { 
+
+      if (e.error === 'not-allowed') {
         console.error('[SR] Microphone permission denied');
-        setStatusMsg('⚠️ Mic blocked by browser.'); 
-        return; 
+        setStatusMsg('⚠️ Mic blocked by browser.');
+        return;
       }
-      if (!dead.current) { 
+
+      if (e.error === 'no-speech') {
+        // "no-speech" is normal - just log it, don't restart immediately
+        console.log('[SR] no speech detected (normal)');
+        return;
+      }
+
+      // For other errors, restart after a short delay
+      if (!dead.current) {
         console.log('[SR] restarting after error...');
-        try { sr.start(); } catch (_) {} 
+        setTimeout(() => {
+          if (!dead.current) {
+            try { sr.start(); } catch (_) {}
+          }
+        }, 1000); // 1 second delay
       }
     };
 
-    sr.onend = () => { 
+    sr.onend = () => {
       console.log('[SR] onend - speech recognition ended');
-      if (!dead.current) { 
-        console.log('[SR] restarting...');
-        try { sr.start(); } catch (_) {} 
-      } 
+      if (!dead.current) {
+        console.log('[SR] restarting in 2 seconds...');
+        // Add a delay before restarting to prevent aggressive restarting
+        setTimeout(() => {
+          if (!dead.current) {
+            try { sr.start(); } catch (_) {}
+          }
+        }, 2000); // 2 second delay
+      }
     };
 
     srRef.current = sr;
