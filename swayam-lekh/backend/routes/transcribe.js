@@ -8,11 +8,75 @@ const OpenAI = require('openai');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
-const groqClient = new OpenAI({ apiKey: process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY });
+const groqClient = new OpenAI({ 
+	apiKey: process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY,
+	baseURL: 'https://api.groq.com/openai/v1' 
+});
 
-// STT via frontend; keep endpoint stubbed
-router.post('/stt', upload.single('audio'), (req, res) => {
-	return res.status(503).json({ error: 'Server STT disabled; frontend handles STT directly.' });
+router.post('/stt', upload.single('audio'), async (req, res) => {
+	const tempFilePath = path.join(os.tmpdir(), `stt-${crypto.randomBytes(8).toString('hex')}.webm`);
+	try {
+		if (!req.file) return res.status(400).json({ error: 'No audio file provided' });
+		fs.writeFileSync(tempFilePath, req.file.buffer);
+
+		// 1. Try Sarvam Primary
+		try {
+			const bufferSize = req.file.buffer.length;
+			const mimeType = req.file.mimetype || 'audio/webm';
+			const fileName = req.file.originalname || 'speech.webm';
+			
+			console.log(`[STT] Processing audio: ${fileName}, size: ${bufferSize} bytes, type: ${mimeType}`);
+
+			const formData = new FormData();
+			// Use File object for better FormData compatibility in Node.js
+			const audioFile = new File([req.file.buffer], fileName, { type: mimeType });
+			formData.append('file', audioFile);
+			
+			if (req.body.language_code) formData.append('language_code', req.body.language_code);
+			if (req.body.model) formData.append('model', req.body.model);
+
+			const sarvamResponse = await fetch('https://api.sarvam.ai/speech-to-text', {
+				method: 'POST',
+				headers: {
+					'api-subscription-key': process.env.VITE_SARVAM_API_KEY || process.env.SARVAM_API_KEY,
+				},
+				body: formData
+			});
+
+			if (sarvamResponse.ok) {
+				const data = await sarvamResponse.json();
+				if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+				console.log('[STT] Sarvam success');
+				return res.json(data);
+			}
+
+			const errText = await sarvamResponse.text().catch(() => 'No error body');
+			console.warn('[STT] Sarvam failed, trying Groq fallback. Status:', sarvamResponse.status, 'Body:', errText);
+		} catch (sarvamErr) {
+			console.warn('[STT] Sarvam service error, trying Groq fallback:', sarvamErr.message);
+		}
+
+		// 2. Fallback to Groq
+		const transcription = await groqClient.audio.transcriptions.create({
+			file: fs.createReadStream(tempFilePath),
+			model: 'whisper-large-v3',
+			language: req.body.language_code ? req.body.language_code.split('-')[0] : 'en',
+			response_format: 'json',
+		});
+
+		if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+
+		res.json({
+			transcript: transcription.text,
+			text: transcription.text,
+			provider: 'groq'
+		});
+
+	} catch (error) {
+		if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+		console.error('STT Final Error:', error);
+		res.status(500).json({ error: error.message });
+	}
 });
 
 async function runGroqHealthCheck() {

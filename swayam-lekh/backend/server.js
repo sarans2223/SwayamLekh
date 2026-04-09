@@ -4,6 +4,8 @@ const uploadAudioRoute = require('./routes/uploadAudio');
 const transcribeRoute = require('./routes/transcribe');
 const correctRoute = require('./routes/correct');
 const studentsRoute = require('./routes/students');
+const assistantRoute = require('./routes/assistant');
+const speakRoute = require('./routes/speak');
 const cors = require('cors');
 
 const app = express();
@@ -18,6 +20,8 @@ app.use('/api', uploadAudioRoute);
 app.use('/api', transcribeRoute);
 app.use('/api', correctRoute);
 app.use('/api', studentsRoute);
+app.use('/api', assistantRoute);
+app.use('/api', speakRoute);
 
 app.get('/', (req, res) => {
 	res.send('Swayam Lekh Backend Running');
