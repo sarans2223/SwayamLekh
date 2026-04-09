@@ -23,10 +23,6 @@ const COMMAND_HINTS = {
   finish: ['finish', 'finish exam', 'end exam', 'submit exam', 'finish now', 'end now'],
   repeat: ['repeat', 'repeet', 'repete', 're peat', 'ripeat', 'repit', 'ripit'],
   clear: ['clear', 'cleer', 'klear', 'cliar', 'kleer', 'claire'],
-<<<<<<< HEAD
-  flag: ['flag', 'flab', 'fleg', 'plag'],
-  help: ['help', 'elp', 'halp', 'help help help', 'help help', 'helphelp', 'halp halp', 'elp elp'],
-=======
   flag: ['flag', 'flab', 'fleg', 'plag', 'flug', 'plug'],
   help: [
     'help', 'elp', 'halp', 'and', 'hand', 'end', 'held', 'held me', 'help me', 
@@ -34,7 +30,6 @@ const COMMAND_HINTS = {
     'alpha', 'health', 'eld', 'alp', 'alpa',
     'udhavi', 'theriyala', 'help panunga', 'assist', 'assistant'
   ],
->>>>>>> upstream
   'list commands': ['list commands', 'list the commands', 'show commands', 'show the commands', 'command list', 'commands list'],
   'skip skip': ['skip skip', 'skipskip'],
   start: ['start', 'staart', 'tart', 'estart', 'istart', 'estaan', 'estaat'],

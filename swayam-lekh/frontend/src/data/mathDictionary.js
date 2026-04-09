@@ -32,8 +32,7 @@ export const MATH_PATTERNS = [
     pattern: /(?:square\s|round\s|curly\s)?brackets?\sclose|close\s(?:square\s|round\s|curly\s)?brackets?/gi,
     replacement: ')'
   },
-<<<<<<< HEAD
-=======
+
 
   // ── DERIVATIVES ────────────────────────────────────────
 
@@ -170,7 +169,7 @@ export const MATH_PATTERNS = [
   { pattern: /open brackets?/gi, replacement: '(' },
   { pattern: /brackets? close/gi, replacement: ')' },
   { pattern: /close brackets?/gi, replacement: ')' },
->>>>>>> upstream
+
   { pattern: /open curly/gi, replacement: '{' },
   { pattern: /close curly/gi, replacement: '}' },
 
@@ -196,8 +195,7 @@ export const MATH_PATTERNS = [
   { pattern: /\btheta\b/gi, replacement: '\\theta' },
   { pattern: /\balpha\b/gi, replacement: '\\alpha' },
   { pattern: /\bbeta\b/gi, replacement: '\\beta' },
-<<<<<<< HEAD
-=======
+
   { pattern: /\bgamma\b/gi, replacement: '\\gamma' },
   { pattern: /\bGamma\b/g, replacement: '\\Gamma' },
   { pattern: /\bdelta\b/gi, replacement: '\\delta' },
@@ -288,7 +286,7 @@ export const MATH_PATTERNS = [
   },
 
   // ── NUMBER WORDS TO SYMBOLS ────────────────────────────
->>>>>>> upstream
+
 
   // ── 6. NUMBERS (Always LAST) ──────────────────────────────
   { pattern: /\bzero\b/gi, replacement: '0' },

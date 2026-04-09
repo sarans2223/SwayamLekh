@@ -21,13 +21,9 @@
     "openai": "^6.33.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-<<<<<<< HEAD
     "react-katex": "^3.1.0",
-    "react-router-dom": "^6.30.3"
-=======
     "react-router-dom": "^6.30.3",
     "socket.io-client": "^4.8.3"
->>>>>>> upstream
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",

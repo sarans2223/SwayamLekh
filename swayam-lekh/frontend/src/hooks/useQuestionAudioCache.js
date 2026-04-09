@@ -6,6 +6,12 @@ const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000'
 export function useQuestionAudioCache() {
   const audioCache = useRef({})
   const objectUrls = useRef(new Set())
+  const preloadRunRef = useRef({ key: '', inFlight: false })
+  const sarvamRateStateRef = useRef({
+    lastRequestTs: 0,
+    backoffUntilTs: 0,
+  })
+  const openAIFallbackDisabledRef = useRef(false)
   const [loadingProgress, setLoadingProgress] = useState(0)
   const [totalQuestions, setTotalQuestions] = useState(0)
   const [cacheReady, setCacheReady] = useState(false)
@@ -30,21 +36,50 @@ export function useQuestionAudioCache() {
   const wait = (ms) => new Promise((res) => setTimeout(res, ms));
 
   async function fetchOpenAISpeak(text) {
+    if (openAIFallbackDisabledRef.current) return null
+
     const response = await fetch(`${BACKEND_URL}/api/speak`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, voice: 'nova' })
     });
-    if (!response.ok) throw new Error('OpenAI fallback failed');
+
+    if (!response.ok) {
+      let body = ''
+      try {
+        body = await response.text()
+      } catch (_) {
+        body = ''
+      }
+
+      // If endpoint/config is missing, stop retrying OpenAI fallback for this session.
+      if (response.status === 404 || response.status === 500) {
+        openAIFallbackDisabledRef.current = true
+      }
+
+      throw new Error(`OpenAI fallback failed (${response.status}): ${body}`)
+    }
+
     const data = await response.json();
-    return data.audio;
+    return data?.audio || null;
   }
 
   async function fetchQuestionAudio(questionText, { isMaths = false } = {}, retryCount = 0) {
     const speakableText = latexToSpeakable(questionText)
+    const MIN_REQUEST_GAP_MS = 1400
     
     // Tier 1: Sarvam
     try {
+      const now = Date.now()
+      const rateState = sarvamRateStateRef.current
+      const gapWait = Math.max(0, MIN_REQUEST_GAP_MS - (now - rateState.lastRequestTs))
+      const backoffWait = Math.max(0, rateState.backoffUntilTs - now)
+      const waitMs = Math.max(gapWait, backoffWait)
+      if (waitMs > 0) {
+        await wait(waitMs)
+      }
+
+      sarvamRateStateRef.current.lastRequestTs = Date.now()
       const response = await fetch('https://api.sarvam.ai/text-to-speech', {
         method: 'POST',
         headers: {
@@ -64,12 +99,19 @@ export function useQuestionAudioCache() {
         })
       })
 
-      if (response.status === 429 && retryCount < 2) {
-        const backoff = Math.pow(2, retryCount) * 1000;
+      if (response.status === 429 && retryCount < 3) {
+        const retryAfterHeader = Number(response.headers.get('retry-after'))
+        const headerBackoff = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0 ? retryAfterHeader * 1000 : 0
+        const expBackoff = Math.pow(2, retryCount) * 1000
+        const jitter = Math.floor(Math.random() * 350)
+        const backoff = Math.max(headerBackoff, expBackoff + jitter)
+        sarvamRateStateRef.current.backoffUntilTs = Date.now() + backoff
         console.warn(`Sarvam 429: Rate limited. Retrying in ${backoff}ms...`);
         await wait(backoff);
         return fetchQuestionAudio(questionText, { isMaths }, retryCount + 1);
       }
+
+      sarvamRateStateRef.current.backoffUntilTs = 0
 
       if (!response.ok) {
         throw new Error(`Sarvam error: ${response.status}`)
@@ -81,10 +123,14 @@ export function useQuestionAudioCache() {
       // Tier 2: OpenAI Fallback (only on specific errors or after retries)
       console.warn(`Tier 1 (Sarvam) failed for question audio, trying Tier 2 (OpenAI Fallback)`);
       try {
-        return await fetchOpenAISpeak(speakableText);
+        const fallbackAudio = await fetchOpenAISpeak(speakableText)
+        if (!fallbackAudio) {
+          return null
+        }
+        return fallbackAudio
       } catch (fallbackErr) {
-        console.error('All high-quality TTS tiers failed:', fallbackErr);
-        throw fallbackErr;
+        console.error('All high-quality TTS tiers failed; browser speech will be used:', fallbackErr);
+        return null
       }
     }
   }
@@ -117,6 +163,13 @@ export function useQuestionAudioCache() {
   }
 
   const preloadAllQuestions = useCallback(async (questions) => {
+    const preloadKey = (questions || []).map((q) => `${q.id}:${q.isMaths ? '1' : '0'}`).join('|')
+    if (preloadRunRef.current.inFlight && preloadRunRef.current.key === preloadKey) {
+      return
+    }
+
+    preloadRunRef.current = { key: preloadKey, inFlight: true }
+
     setTotalQuestions(questions.length)
     setLoadingProgress(0)
     setCacheReady(false)
@@ -124,22 +177,26 @@ export function useQuestionAudioCache() {
 
     let loaded = 0
 
-    for (const question of questions) {
-      try {
-        // Add a primary delay between requests to avoid hitting rate limits
-        if (loaded > 0) await wait(600); 
+    try {
+      for (const question of questions) {
+        try {
+          // Keep a deliberate gap between items so preload doesn't burst TTS calls.
+          if (loaded > 0) await wait(450)
 
-        const base64Audio = await fetchQuestionAudio(question.text, { isMaths: !!question.isMaths })
-        storeQuestionAudio(question.id, base64Audio)
-        loaded++
-        setLoadingProgress(loaded)
-      } catch (error) {
-        console.error(`Failed to preload question ${question.id}:`, error)
-        audioCache.current[question.id] = null
-        loaded++
-        setLoadingProgress(loaded)
-        setCacheError(error)
+          const base64Audio = await fetchQuestionAudio(question.text, { isMaths: !!question.isMaths })
+          storeQuestionAudio(question.id, base64Audio)
+          loaded++
+          setLoadingProgress(loaded)
+        } catch (error) {
+          console.error(`Failed to preload question ${question.id}:`, error)
+          audioCache.current[question.id] = null
+          loaded++
+          setLoadingProgress(loaded)
+          setCacheError(error)
+        }
       }
+    } finally {
+      preloadRunRef.current.inFlight = false
     }
 
     setCacheReady(true)

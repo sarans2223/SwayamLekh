@@ -8,17 +8,12 @@ const BACKEND_BASE_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:
 const BACKEND_STT_URL = `${BACKEND_BASE_URL}/api/stt`;
 
 /**
-<<<<<<< HEAD
- * Transcribe a microphone audio blob using the Sarvam STT backend proxy.
-=======
  * Transcribe a microphone audio blob using Sarvam STT via Backend Proxy.
->>>>>>> upstream
  *
  * @param {Blob} audioBlob - WebM/WAV audio blob from MediaRecorder
  * @param {string} languageCode - Language hint such as 'ta-IN' or 'hi-IN'
  * @returns {Promise<string>} transcript text
  */
-<<<<<<< HEAD
 export async function sarvamTranscribe(audioBlob, languageCode = 'ta-IN') {
   if (!audioBlob || !audioBlob.size) return '';
 
@@ -26,23 +21,16 @@ export async function sarvamTranscribe(audioBlob, languageCode = 'ta-IN') {
     const input = (languageCode || 'ta-IN').trim();
     if (/^[a-z]{2}-IN$/i.test(input)) return input.toLowerCase();
     if (input.toLowerCase() === 'ta') return 'ta-IN';
+    if (input.toLowerCase() === 'hi') return 'hi-IN';
     if (input.toLowerCase() === 'en') return 'en-IN';
     return 'unknown';
   })();
 
   const formData = new FormData();
   formData.append('audio', audioBlob, 'audio.webm');
-  formData.append('language_code', normalizedLanguageCode);
-=======
-export async function sarvamTranscribe(audioBlob, languageCode = 'hi-IN') {
-  if (!audioBlob || !audioBlob.size) return '';
-
-  const formData = new FormData();
-  formData.append('audio', audioBlob, 'audio.webm');
   
   // Use correct Sarvam field names
-  formData.append('language_code', languageCode);
->>>>>>> upstream
+  formData.append('language_code', normalizedLanguageCode);
   formData.append('model', 'saarika:v2.5');
 
   const response = await fetch(BACKEND_STT_URL, {

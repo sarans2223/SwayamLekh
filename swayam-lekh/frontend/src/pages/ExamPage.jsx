@@ -55,11 +55,17 @@ export default function ExamPage() {
     dismissAlarm,
     triggerAlarm,
     startExamTimer,
+    formattedTime,
   } = useExam();
 
   const { student } = useStudent();
   const { mode, lastCommand, setLastCommand } = useVoice();
-  const { timeLeft, formatted, isWarning, isCritical } = useExamTimer(state.startTime);
+  
+  const timeLeft = state.timeLeft || 0;
+  const formatted = formattedTime || '00:00:00';
+  const isWarning = timeLeft <= 900 && timeLeft > 300;
+  const isCritical = timeLeft <= 300;
+  
   const instructionLang = student?.instructionLang === 'ta' ? 'ta' : 'en';
   // Temporarily disable exam intro audio when true
   const DISABLE_INTRO_AUDIO = true;
@@ -70,6 +76,12 @@ export default function ExamPage() {
   const [introBlocked, setIntroBlocked] = useState(false);
   const [introCompleted, setIntroCompleted] = useState(false);
   const modeRef = useRef(mode);
+  const hiddenVideoRef = useRef(null);
+  const videoRef = useRef(null);
+  const commandHandlerRef = useRef(null);
+  const lastSpokenOptionRef = useRef({ letter: null, ts: 0 });
+  const [activeGesture, setActiveGesture] = useState(null);
+  const [showCommandAssistant, setShowCommandAssistant] = useState(false);
 
   useEffect(() => {
     modeRef.current = mode;
@@ -968,14 +980,11 @@ export default function ExamPage() {
           }
           audio.onended = resumeRecognitionIfNeeded;
         })
-        .catch(() => {
+        .catch((err) => {
+          console.error('[ExamVoice] Speech action failed:', err);
           resumeRecognitionIfNeeded();
         });
-    } catch (err) {
-      console.error('[ExamVoice] Speech action failed:', err);
-      resumeRecognitionIfNeeded();
-    }
-  };
+    };
 
   const extractQuestionNumber = (text) => {
     if (!text) return null;
@@ -1862,22 +1871,14 @@ export default function ExamPage() {
       recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
 
       recorder.onstop = async () => {
-<<<<<<< HEAD
         if (isTTSPlaying() || showCommandAssistant) {
-          console.log('[ExamVoice] Ignoring chunk - TTS playing or Assistant open. HIFI recognition loop halted.');
+          if (VERBOSE_EXAM_PAGE) console.log('[ExamVoice] Ignoring chunk - TTS playing or Assistant open.');
           // Only recurse if it's JUST TTS, if assistant is open we rely on useEffect rerun to resume
           if (isTTSPlaying() && !showCommandAssistant && !cancelled && !optionCaptured) {
             recordOneChunk();
           }
           return;
         }
-=======
-            if (isTTSPlaying()) {
-              // suppressed log when TTS is active
-              if (!cancelled && !optionCaptured) recordOneChunk();
-              return;
-            }
->>>>>>> upstream
         optionRecognitionRef.current = null;
         if (cancelled || optionCaptured) return;
         if (!chunks.length) { setTimeout(recordOneChunk, 100); return; }
@@ -2216,4 +2217,5 @@ return (
   </div>
 );
 }
+
 
