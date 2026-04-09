@@ -2,11 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const uploadAudioRoute = require('./routes/uploadAudio');
 const transcribeRoute = require('./routes/transcribe');
-const sarvamSpeechRoute = require('./routes/sarvamSpeech');
 const correctRoute = require('./routes/correct');
 const studentsRoute = require('./routes/students');
-const convertRoute = require('./routes/convert');
-const intentRoute = require('./routes/intent');
+const assistantRoute = require('./routes/assistant');
+const speakRoute = require('./routes/speak');
 const cors = require('cors');
 
 const app = express();
@@ -19,11 +18,10 @@ app.use(express.urlencoded({ extended: true }));
 // Mount audio upload route
 app.use('/api', uploadAudioRoute);
 app.use('/api', transcribeRoute);
-app.use('/api', sarvamSpeechRoute);
 app.use('/api', correctRoute);
 app.use('/api', studentsRoute);
-app.use('/api', convertRoute);
-app.use('/api', intentRoute);
+app.use('/api', assistantRoute);
+app.use('/api', speakRoute);
 
 app.get('/', (req, res) => {
 	res.send('Swayam Lekh Backend Running');

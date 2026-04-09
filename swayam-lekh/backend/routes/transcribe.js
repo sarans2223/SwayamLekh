@@ -8,50 +8,74 @@ const OpenAI = require('openai');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
-const groqClient = new OpenAI({ apiKey: process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY });
+const groqClient = new OpenAI({ 
+	apiKey: process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY,
+	baseURL: 'https://api.groq.com/openai/v1' 
+});
 
-// STT via frontend; keep endpoint stubbed
 router.post('/stt', upload.single('audio'), async (req, res) => {
-	// return res.status(503).json({ error: 'Server STT disabled; frontend handles STT directly.' });
-
-	// Enable Sarvam STT proxy
-	if (!req.file) {
-		return res.status(400).json({ error: 'Missing audio file.' });
-	}
-
-	const apiKey = process.env.SARVAM_API_KEY || process.env.VITE_SARVAM_API_KEY || '';
-	if (!apiKey) {
-		return res.status(500).json({ error: 'Missing SARVAM_API_KEY.' });
-	}
-
-	const languageCode = req.body.language_code || 'en-IN';
-	const model = req.body.model || 'saarika:v2.5';
-
+	const tempFilePath = path.join(os.tmpdir(), `stt-${crypto.randomBytes(8).toString('hex')}.webm`);
 	try {
-		const formData = new FormData();
-		const audioBlob = new Blob([req.file.buffer], { type: 'audio/webm' });
-		formData.append('file', audioBlob, 'speech.webm');
-		formData.append('language_code', languageCode);
-		formData.append('model', model);
+		if (!req.file) return res.status(400).json({ error: 'No audio file provided' });
+		fs.writeFileSync(tempFilePath, req.file.buffer);
 
-		const response = await fetch('https://api.sarvam.ai/speech-to-text', {
-			method: 'POST',
-			headers: { 'api-subscription-key': apiKey },
-			body: formData,
-		});
+		// 1. Try Sarvam Primary
+		try {
+			const bufferSize = req.file.buffer.length;
+			const mimeType = req.file.mimetype || 'audio/webm';
+			const fileName = req.file.originalname || 'speech.webm';
+			
+			console.log(`[STT] Processing audio: ${fileName}, size: ${bufferSize} bytes, type: ${mimeType}`);
 
-		const payload = await response.text();
-		if (!response.ok) {
-			return res.status(response.status).json({ error: 'Sarvam STT request failed.', details: payload });
+			const formData = new FormData();
+			// Use File object for better FormData compatibility in Node.js
+			const audioFile = new File([req.file.buffer], fileName, { type: mimeType });
+			formData.append('file', audioFile);
+			
+			if (req.body.language_code) formData.append('language_code', req.body.language_code);
+			if (req.body.model) formData.append('model', req.body.model);
+
+			const sarvamResponse = await fetch('https://api.sarvam.ai/speech-to-text', {
+				method: 'POST',
+				headers: {
+					'api-subscription-key': process.env.VITE_SARVAM_API_KEY || process.env.SARVAM_API_KEY,
+				},
+				body: formData
+			});
+
+			if (sarvamResponse.ok) {
+				const data = await sarvamResponse.json();
+				if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+				console.log('[STT] Sarvam success');
+				return res.json(data);
+			}
+
+			const errText = await sarvamResponse.text().catch(() => 'No error body');
+			console.warn('[STT] Sarvam failed, trying Groq fallback. Status:', sarvamResponse.status, 'Body:', errText);
+		} catch (sarvamErr) {
+			console.warn('[STT] Sarvam service error, trying Groq fallback:', sarvamErr.message);
 		}
 
-		const data = JSON.parse(payload || '{}');
-		return res.json({
-			transcript: (data.transcript || '').trim(),
+		// 2. Fallback to Groq
+		const transcription = await groqClient.audio.transcriptions.create({
+			file: fs.createReadStream(tempFilePath),
+			model: 'whisper-large-v3',
+			language: req.body.language_code ? req.body.language_code.split('-')[0] : 'en',
+			response_format: 'json',
 		});
+
+		if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+
+		res.json({
+			transcript: transcription.text,
+			text: transcription.text,
+			provider: 'groq'
+		});
+
 	} catch (error) {
-		console.error('[STT Proxy] Error', error);
-		return res.status(500).json({ error: 'STT proxy error', details: error?.message || String(error) });
+		if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+		console.error('STT Final Error:', error);
+		res.status(500).json({ error: error.message });
 	}
 });
 

@@ -4,7 +4,13 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   optimizeDeps: {
+    include: ['socket.io-client'],
     exclude: ['react-router-dom']
+  },
+  resolve: {
+    alias: {
+      'socket.io-client': 'socket.io-client'
+    }
   },
   server: {
     host: '0.0.0.0',
