@@ -11,22 +11,29 @@ function MathText({ text, style }) {
     const source = text || '';
 
     const parts = [];
-    const textRegex = /\\text\{([^{}]*)\}/g;
+    // Match common math delimiters: $$...$$, $...$, \[...\], \(...\)
+    const mathRegex = /(\$\$[\s\S]+?\$\$|\$[\s\S]+?\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\))/g;
     let lastIndex = 0;
     let match;
 
-    while ((match = textRegex.exec(source)) !== null) {
-      const before = source.slice(lastIndex, match.index).trim();
+    while ((match = mathRegex.exec(source)) !== null) {
+      const before = source.slice(lastIndex, match.index);
       if (before) {
-        parts.push({ type: 'math', value: before });
+        parts.push({ type: 'text', value: before });
       }
-      parts.push({ type: 'text', value: match[1] });
-      lastIndex = textRegex.lastIndex;
+      
+      // Extract the raw math without the delimiters for rendering
+      let rawMath = match[0];
+      const isBlock = rawMath.startsWith('$$') || rawMath.startsWith('\\[');
+      rawMath = rawMath.replace(/^\$\$|\$\$$|^\\\[|\\\]$|^\$|\$$|^\\\(|\\\)$/g, '');
+      
+      parts.push({ type: 'math', value: rawMath, displayMode: isBlock });
+      lastIndex = mathRegex.lastIndex;
     }
 
-    const tail = source.slice(lastIndex).trim();
+    const tail = source.slice(lastIndex);
     if (tail) {
-      parts.push({ type: 'math', value: tail });
+      parts.push({ type: 'text', value: tail });
     }
 
     const normalizedParts = parts.length ? parts : [{ type: 'text', value: source }];
@@ -35,16 +42,23 @@ function MathText({ text, style }) {
       const html = normalizedParts
         .map((part) => {
           if (part.type === 'text') {
-            return `<span>${part.value}</span>`;
+            // Replace newlines with <br> for proper formatting and safely inject text
+            const safeText = part.value
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/\n/g, '<br/>');
+            // Adding normal whiteSpace handling to text spans
+            return `<span style="white-space: pre-wrap; font-style: normal; font-weight: normal; font-family: inherit;">${safeText}</span>`;
           }
 
           const rendered = katex.renderToString(part.value, {
             throwOnError: false,
-            displayMode: false,
+            displayMode: part.displayMode,
           });
           return `<span class="inline-math">${rendered}</span>`;
         })
-        .join(' ');
+        .join('');
 
       mathRef.current.innerHTML = html;
 
@@ -53,9 +67,6 @@ function MathText({ text, style }) {
         node.style.whiteSpace = 'nowrap';
         node.style.maxWidth = '100%';
         node.style.display = 'inline-block';
-        node.style.fontFamily = 'var(--font-sans)';
-        node.style.fontStyle = 'normal';
-        node.style.letterSpacing = 'normal';
       });
 
       const nonItalicMathNodes = mathRef.current.querySelectorAll('.inline-math .mathnormal, .inline-math .mathit');
@@ -75,6 +86,8 @@ function MathText({ text, style }) {
         overflow: 'hidden',
         maxWidth: '100%',
         overflowX: 'hidden',
+        whiteSpace: 'pre-wrap',       // Ensure parent respects spaces and newlines
+        wordSpacing: 'normal'         // Enforce default word spacing
       }}
     />
   );

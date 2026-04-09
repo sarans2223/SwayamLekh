@@ -202,7 +202,6 @@ export async function convertMath(spokenText) {
   // Normalize spaces and lowercase for pattern matching
   const normalizedText = spokenText.trim().toLowerCase();
 
-<<<<<<< HEAD
   // First attempt: pattern engine
   let result = convertSpokenMathToLatex(normalizedText);
 
@@ -228,15 +227,6 @@ export async function convertMath(spokenText) {
       console.log('MathConverter: Calling Groq fallback for:', result);
       result = await convertWithGroq(spokenText);
     }
-=======
-  // Check if there are still unconverted words (fallback to Groq)
-  const containsUnconvertedWords = /\b(and|or|the|a|of|in|to|from|with|by|for|is|are)\b/gi.test(result);
-  
-  if (containsUnconvertedWords && result === spokenText) {
-    // Pattern engine didn't match anything, try Groq
-    if (process.env.NODE_ENV !== 'production') console.debug('MathConverter: Pattern engine insufficient, calling Groq fallback');
-    result = await convertWithGroq(spokenText);
->>>>>>> upstream
   }
 
   return result;

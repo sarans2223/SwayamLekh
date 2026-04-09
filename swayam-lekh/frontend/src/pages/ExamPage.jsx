@@ -188,12 +188,14 @@ export default function ExamPage() {
 
   useEffect(() => {
     if (!whisperSupported) return undefined;
-    // Start Whisper-based recognition when the exam is active
-    if (examStarted && introCompleted) {
+    // Start Whisper-based recognition when the exam is active and helper is closed
+    if (examStarted && introCompleted && !showCommandAssistant) {
       try { startWhisper(); } catch (e) { console.warn('[ExamPage] startWhisper failed', e); }
+    } else {
+      stopWhisper();
     }
     return () => stopWhisper();
-  }, [whisperSupported, examStarted, introCompleted, startWhisper, stopWhisper]);
+  }, [whisperSupported, examStarted, introCompleted, showCommandAssistant, startWhisper, stopWhisper]);
 
   useEffect(() => {
     const isMathsMode = student?.subjectMode === 'maths';
@@ -1086,13 +1088,9 @@ export default function ExamPage() {
         }
 
         if (matched === 'stop' || matched === 'help') {
-          // If it's the triple-repeat version, let it fall through to the alarm trigger
-          const isTriple = normalized.includes('help help help') || normalized.includes('stop stop stop');
-          if (!isTriple) {
-            setShowCommandAssistant(true);
-            noteCommand('Help requested - Opening Assistant');
-            return true;
-          }
+          setShowCommandAssistant(true);
+          noteCommand('Help requested - Opening Assistant');
+          return true;
         }
 
         if (matched === 'submit') {
@@ -1370,11 +1368,7 @@ export default function ExamPage() {
         }
       }
 
-      if (normalized.includes('help help help') || normalized.includes('stop stop stop')) {
-        triggerAlarm();
-        noteCommand('Help requested');
-        return true;
-      }
+
 
       const finishByMatch = normalized.match(/\bfinish\s+by\b(.+)/);
       if (finishByMatch) {
@@ -1516,9 +1510,9 @@ export default function ExamPage() {
     try {
       commandHandlerRef.current = (chunk) => {
         try {
-          // If the exam mic is not active, ignore incoming transcripts entirely
-          if (!examMicRef.current || micStatus !== 'active') {
-            if (VERBOSE_EXAM_PAGE) console.log('[ExamPage] Ignoring transcript because mic is not active');
+          // If the exam mic is not active or the chatbot is open, ignore incoming transcripts entirely
+          if (!examMicRef.current || micStatus !== 'active' || showCommandAssistant) {
+            if (VERBOSE_EXAM_PAGE) console.log('[ExamPage] Ignoring transcript because mic is not active or Chatbot is open');
             return false;
           }
 
@@ -1761,7 +1755,6 @@ export default function ExamPage() {
         recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
 
         recorder.onstop = async () => {
-<<<<<<< HEAD
           if (isTTSPlaying() || showCommandAssistant) {
             console.log('[ExamVoice] Ignoring chunk - TTS playing or Assistant open. HIFI recognition loop halted.');
             // Only recurse if it's JUST TTS, if assistant is open we rely on useEffect rerun to resume
@@ -1770,13 +1763,6 @@ export default function ExamPage() {
             }
             return;
           }
-=======
-            if (isTTSPlaying()) {
-              // suppressed log when TTS is active
-              if (!cancelled && !optionCaptured) recordOneChunk();
-              return;
-            }
->>>>>>> upstream
           optionRecognitionRef.current = null;
           if (cancelled || optionCaptured) return;
           if (!chunks.length) { setTimeout(recordOneChunk, 100); return; }

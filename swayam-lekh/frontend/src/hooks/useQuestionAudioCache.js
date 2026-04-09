@@ -3,6 +3,9 @@ import { latexToSpeakable } from '../utils/latexToSpeakable'
 
 const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000').replace(/\/$/, '');
 
+let globalSarvamRateLimitUntil = 0;
+
+
 export function useQuestionAudioCache() {
   const audioCache = useRef({})
   const objectUrls = useRef(new Set())
@@ -35,7 +38,10 @@ export function useQuestionAudioCache() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, voice: 'nova' })
     });
-    if (!response.ok) throw new Error('OpenAI fallback failed');
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.details || data.error || `OpenAI fallback failed (Status ${response.status})`);
+    }
     const data = await response.json();
     return data.audio;
   }
@@ -45,6 +51,10 @@ export function useQuestionAudioCache() {
     
     // Tier 1: Sarvam
     try {
+      if (Date.now() < globalSarvamRateLimitUntil) {
+        throw new Error('Sarvam API is in global rate-limit cooldown');
+      }
+
       const response = await fetch('https://api.sarvam.ai/text-to-speech', {
         method: 'POST',
         headers: {
@@ -64,11 +74,17 @@ export function useQuestionAudioCache() {
         })
       })
 
-      if (response.status === 429 && retryCount < 2) {
-        const backoff = Math.pow(2, retryCount) * 1000;
-        console.warn(`Sarvam 429: Rate limited. Retrying in ${backoff}ms...`);
-        await wait(backoff);
-        return fetchQuestionAudio(questionText, { isMaths }, retryCount + 1);
+      if (response.status === 429) {
+        if (retryCount < 1) {
+          const backoff = 2500 + Math.random() * 1000;
+          console.warn(`Sarvam 429: Rate limited. Retrying in ${Math.round(backoff)}ms (Attempt ${retryCount + 1})...`);
+          await wait(backoff);
+          return fetchQuestionAudio(questionText, { isMaths }, retryCount + 1);
+        } else {
+          console.warn('Sarvam 429: Persistent rate limit. Entering 60-second cooldown for Sarvam API.');
+          globalSarvamRateLimitUntil = Date.now() + 60000; // 60s cooldown
+          throw new Error('Sarvam globally rate limited (429)');
+        }
       }
 
       if (!response.ok) {
@@ -127,7 +143,7 @@ export function useQuestionAudioCache() {
     for (const question of questions) {
       try {
         // Add a primary delay between requests to avoid hitting rate limits
-        if (loaded > 0) await wait(600); 
+        if (loaded > 0) await wait(1500); 
 
         const base64Audio = await fetchQuestionAudio(question.text, { isMaths: !!question.isMaths })
         storeQuestionAudio(question.id, base64Audio)

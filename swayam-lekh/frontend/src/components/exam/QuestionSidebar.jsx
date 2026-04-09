@@ -32,6 +32,16 @@ export default function QuestionSidebar({
     } else {
       setInternalSectionId(id);
     }
+
+    // Immediately jump to the first question of that section
+    const targetSection = sections.find(s => s.id === id);
+    if (targetSection && targetSection.questions && targetSection.questions.length > 0) {
+      const firstQId = targetSection.questions[0].id;
+      const originalIndex = questionIndexMap.get(firstQId);
+      if (originalIndex !== undefined && onJump) {
+        onJump(originalIndex);
+      }
+    }
   };
 
   const questionIndexMap = useMemo(() => {

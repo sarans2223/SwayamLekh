@@ -109,12 +109,19 @@ export function useWhisper({ lang = 'en-IN', onTranscript, onCommand, continuous
           }
         }
       } else if (interimText) {
+        const c = normalizeTranscript(interimText);
+        
+        // Fast-path wake word trigger to instantly open helper modal while user is talking natively
+        const fastTriggers = new Set(['help', 'halp', 'elp', 'help help', 'help help help', 'stop', 'quit', 'list commands']);
+        if (fastTriggers.has(c)) {
+          if (onCommandRef.current) onCommandRef.current(c);
+        }
+
         // Keep interim logging as debug only (not the examvoice line)
         if (LOG_DETECTED_SPEECH) {
-          const c = normalizeTranscript(interimText);
           if (isMeaningful(c)) console.debug('[useWhisper] interim:', c);
         }
-        // do not call onCommand for interim to avoid duplicate handling
+        // do not call onCommand for standard interim text to avoid duplicate handling
       }
     };
 
